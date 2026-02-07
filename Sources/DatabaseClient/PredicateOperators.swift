@@ -77,15 +77,5 @@ public func >= <T: Persistable, V: FieldValueConvertible & Comparable>(
 }
 
 // MARK: - Logical operators
-
-public func && (lhs: QueryIR.Expression, rhs: QueryIR.Expression) -> QueryIR.Expression {
-    .and(lhs, rhs)
-}
-
-public func || (lhs: QueryIR.Expression, rhs: QueryIR.Expression) -> QueryIR.Expression {
-    .or(lhs, rhs)
-}
-
-public prefix func ! (expr: QueryIR.Expression) -> QueryIR.Expression {
-    .not(expr)
-}
+// &&, ||, ! are defined in QueryIR.Expression as static operators.
+// Re-exported here via `import QueryIR`.
