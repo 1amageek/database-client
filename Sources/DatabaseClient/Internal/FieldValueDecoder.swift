@@ -60,7 +60,9 @@ enum FieldValueDecoder {
         }
         if let double = value as? Double {
             // If the double is representable as Int64 without loss, prefer int64
-            if double == Double(Int64(double)) && !double.isNaN && !double.isInfinite {
+            if !double.isNaN && !double.isInfinite
+                && double >= Double(Int64.min) && double <= Double(Int64.max)
+                && double == Double(Int64(double)) {
                 return .int64(Int64(double))
             }
             return .double(double)
