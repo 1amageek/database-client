@@ -1,17 +1,31 @@
 # database-client
 
-Type-safe Swift client SDK for [database-framework](https://github.com/1amageek/database-framework). KeyPath-based queries, change tracking, and WebSocket transport — powered by [QueryIR](https://github.com/1amageek/database-kit).
+Type-safe Swift client SDK for [database-framework](https://github.com/1amageek/database-framework). KeyPath-based queries, change tracking, and WebSocket transport.
 
-## Requirements
+## Overview
 
-- Swift 6.2+
-- iOS 18+ / macOS 15+ / tvOS 18+ / watchOS 11+ / visionOS 2+
+database-client provides a native Swift API for iOS and macOS apps to interact with a database-framework server. Models defined in [database-kit](https://github.com/1amageek/database-kit) are shared between client and server — the same `@Persistable` structs work on both sides.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                      database-kit                        │
+│  @Persistable models, IndexKind protocols, QueryIR       │
+└──────────┬───────────────────────────────┬───────────────┘
+           │                               │
+           ▼                               ▼
+┌─────────────────────┐       ┌─────────────────────────┐
+│  database-framework │       │    database-client       │
+│  FDBContainer       │◄─────│    DatabaseContext        │
+│  Index Maintainers  │  WS  │    KeyPath queries       │
+│  FoundationDB       │       │    iOS / macOS           │
+└─────────────────────┘       └─────────────────────────┘
+```
 
 ## Installation
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/database-client.git", branch: "main"),
+    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0207.0"),
 ]
 ```
 
@@ -24,7 +38,7 @@ dependencies: [
 )
 ```
 
-## Usage
+## Quick Start
 
 ### Connect
 
@@ -33,27 +47,29 @@ import DatabaseClient
 
 let config = ClientConfiguration(
     url: URL(string: "ws://localhost:8080/db")!,
-    authToken: "sk-xxx"
+    authToken: "your-token"
 )
 let context = try await DatabaseContext(configuration: config)
 ```
 
 ### CRUD
 
-`DatabaseContext` uses a change tracking pattern — stage changes with `insert` / `delete`, then commit with `save()`.
+`DatabaseContext` uses a change-tracking pattern — stage changes, then commit with `save()`.
 
 ```swift
+// Insert
 context.insert(User(name: "Alice", age: 30))
 context.insert(User(name: "Bob", age: 25))
 try await context.save()
 
+// Delete
 context.delete(user)
 try await context.save()
 ```
 
 ### Query
 
-Build queries with KeyPath-based predicates and sorting.
+KeyPath-based predicates compile to `QueryIR.Expression` — the same representation used server-side.
 
 ```swift
 let result = try await context.find(User.self)
@@ -65,6 +81,12 @@ let result = try await context.find(User.self)
 for user in result.items {
     print(user.name)
 }
+```
+
+### Get by ID
+
+```swift
+let user = try await context.get(User.self, id: "user-001")
 ```
 
 ### Pagination
@@ -80,12 +102,6 @@ if firstPage.hasMore {
         .continuation(firstPage.continuation!)
         .execute()
 }
-```
-
-### Get by ID
-
-```swift
-let user = try await context.get(User.self, id: "user-001")
 ```
 
 ### Partition (Multi-tenant)
@@ -117,9 +133,9 @@ let count = try await context.find(User.self)
 │     .execute()               → [T]           │
 └──────────────┬───────────────────────────────┘
                │ QueryIR.Expression (Codable)
-┌─ Internal ───▼───────────────────────────────┐
+┌─ Transport ──▼───────────────────────────────┐
 │ DatabaseTransport (protocol)                 │
-│   ├─ WebSocketTransport                      │
+│   ├─ WebSocketTransport (production)         │
 │   └─ InProcessTransport (testing)            │
 └──────────────┬───────────────────────────────┘
                │ ServiceEnvelope (JSON)
@@ -127,9 +143,9 @@ let count = try await context.find(User.self)
          database-framework server
 ```
 
-### Shared Query Interface
+### Shared Query Model
 
-Client and server share the same query representation via **QueryIR**. The KeyPath operators (`\.age > 20`) produce `QueryIR.Expression` trees that are serialized as Codable JSON and evaluated server-side — no separate client/server query languages.
+Client and server share the same query representation via **QueryIR** (from database-kit). KeyPath operators (`\.age > 20`) produce `QueryIR.Expression` trees that are serialized as JSON and evaluated server-side.
 
 ### Testing
 
@@ -137,11 +153,28 @@ Use `InProcessTransport` to test without a network connection:
 
 ```swift
 let transport = InProcessTransport { envelope in
-    // Handle request and return response
+    // Return mock response
 }
 let context = DatabaseContext(transport: transport)
 ```
 
+## Platform Support
+
+| Platform | Minimum Version |
+|----------|-----------------|
+| iOS | 18.0+ |
+| macOS | 15.0+ |
+| tvOS | 18.0+ |
+| watchOS | 11.0+ |
+| visionOS | 2.0+ |
+
+## Related Packages
+
+| Package | Role | Platform |
+|---------|------|----------|
+| **[database-kit](https://github.com/1amageek/database-kit)** | Model definitions, IndexKind protocols, QueryIR | iOS, macOS, Linux |
+| **[database-framework](https://github.com/1amageek/database-framework)** | Server-side index maintenance on FoundationDB | macOS, Linux |
+
 ## License
 
-MIT
+MIT License
