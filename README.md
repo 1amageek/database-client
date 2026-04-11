@@ -25,7 +25,7 @@ database-client provides a native Swift API for iOS and macOS apps to interact w
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0207.0"),
+    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0411.1"),
 ]
 ```
 
