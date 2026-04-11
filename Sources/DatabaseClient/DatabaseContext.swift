@@ -26,11 +26,16 @@ public final class DatabaseContext: Sendable {
     private let transport: any DatabaseTransport
     private let configuration: ClientConfiguration
     private let pendingChanges: Mutex<ChangeSet>
+    private let localSchema: Schema?
 
     /// Connect to a database server
-    public init(configuration: ClientConfiguration) async throws {
+    public init(
+        configuration: ClientConfiguration,
+        localSchema: Schema? = nil
+    ) async throws {
         self.configuration = configuration
         self.pendingChanges = Mutex(ChangeSet())
+        self.localSchema = localSchema
 
         let ws = WebSocketTransport(url: configuration.url, authToken: configuration.authToken)
         try await ws.connect()
@@ -38,10 +43,15 @@ public final class DatabaseContext: Sendable {
     }
 
     /// Create with a custom transport (for testing)
-    init(transport: any DatabaseTransport, configuration: ClientConfiguration = ClientConfiguration(url: URL(string: "ws://localhost")!)) {
+    init(
+        transport: any DatabaseTransport,
+        configuration: ClientConfiguration = ClientConfiguration(url: URL(string: "ws://localhost")!),
+        localSchema: Schema? = nil
+    ) {
         self.transport = transport
         self.configuration = configuration
         self.pendingChanges = Mutex(ChangeSet())
+        self.localSchema = localSchema
     }
 
     // MARK: - Change Tracking (FDBContext compatible)
@@ -113,6 +123,16 @@ public final class DatabaseContext: Sendable {
     /// Start building a query for the given type
     public func find<T: Persistable>(_ type: T.Type) -> QueryBuilder<T> {
         QueryBuilder<T>(transport: transport, entityName: T.persistableType)
+    }
+
+    /// Start building a polymorphic query from wire-safe group metadata.
+    public func findPolymorphic(_ group: PolymorphicGroup) -> PolymorphicQueryBuilder {
+        PolymorphicQueryBuilder(context: self, groupIdentifier: group.identifier)
+    }
+
+    /// Start building a polymorphic query from a logical group identifier.
+    public func findPolymorphic(_ groupIdentifier: String) -> PolymorphicQueryBuilder {
+        PolymorphicQueryBuilder(context: self, groupIdentifier: groupIdentifier)
     }
 
     /// Start a vector similarity query using the canonical read route.
@@ -189,6 +209,12 @@ public final class DatabaseContext: Sendable {
 
     /// Fetch schema information from the server
     public func fetchSchema() async throws -> [Schema.Entity] {
+        let response = try await fetchSchemaResponse()
+        return response.entities
+    }
+
+    /// Fetch schema information including polymorphic groups.
+    public func fetchSchemaResponse() async throws -> SchemaResponse {
         let envelope = ServiceEnvelope(operationID: "schema")
         let response = try await transport.send(envelope)
 
@@ -199,12 +225,43 @@ public final class DatabaseContext: Sendable {
             )
         }
 
-        let schemaResponse = try JSONDecoder().decode(SchemaResponse.self, from: response.payload)
-        return schemaResponse.entities
+        return try JSONDecoder().decode(SchemaResponse.self, from: response.payload)
     }
 
     /// Disconnect from the server
     public func disconnect() async {
         await transport.disconnect()
+    }
+
+    var schema: Schema? {
+        localSchema
+    }
+
+    func decodePolymorphicRow(_ row: QueryRow, groupIdentifier: String) throws -> any Persistable {
+        guard let typeName = row.annotations["_typeName"]?.stringValue else {
+            throw ServiceError(
+                code: "INVALID_RESPONSE",
+                message: "Polymorphic query response is missing _typeName annotation."
+            )
+        }
+        guard let schema = localSchema else {
+            throw ServiceError(
+                code: "SCHEMA_REQUIRED",
+                message: "A local Schema is required to decode polymorphic results for '\(groupIdentifier)'."
+            )
+        }
+        guard schema.polymorphicGroup(identifier: groupIdentifier) != nil else {
+            throw ServiceError(
+                code: "UNKNOWN_POLYMORPHIC_GROUP",
+                message: "Polymorphic group '\(groupIdentifier)' is not registered in the local Schema."
+            )
+        }
+        guard let type = schema.entity(named: typeName)?.persistableType else {
+            throw ServiceError(
+                code: "UNKNOWN_PERSISTABLE_TYPE",
+                message: "Concrete type '\(typeName)' is not registered in the local Schema."
+            )
+        }
+        return try FieldValueDecoder.decodeAny(row.fields, as: type)
     }
 }

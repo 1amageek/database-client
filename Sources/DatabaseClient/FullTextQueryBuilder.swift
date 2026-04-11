@@ -4,7 +4,7 @@ import QueryIR
 import DatabaseClientProtocol
 import FullText
 
-private enum ClientFullTextReadParameter {
+enum ClientFullTextReadParameter {
     static let fieldName = "fieldName"
     static let terms = "terms"
     static let matchMode = "matchMode"

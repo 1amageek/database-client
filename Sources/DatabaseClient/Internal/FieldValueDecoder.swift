@@ -20,6 +20,16 @@ enum FieldValueDecoder {
         return try decoder.decode(T.self, from: jsonData)
     }
 
+    /// Decode a [String: FieldValue] dictionary into a runtime Persistable type.
+    static func decodeAny(
+        _ dict: [String: FieldValue],
+        as type: any Persistable.Type
+    ) throws -> any Persistable {
+        let raw = dict.mapValues { fieldValueToJSON($0) }
+        let jsonData = try JSONSerialization.data(withJSONObject: raw)
+        return try decoder.decode(type, from: jsonData)
+    }
+
     /// Encode a Persistable instance to [String: FieldValue]
     ///
     /// Strategy: T → JSON → raw dictionary → [String: FieldValue]

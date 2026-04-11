@@ -4,7 +4,7 @@ import QueryIR
 import DatabaseClientProtocol
 import Vector
 
-private enum ClientVectorReadParameter {
+enum ClientVectorReadParameter {
     static let fieldName = "fieldName"
     static let dimensions = "dimensions"
     static let queryVector = "queryVector"

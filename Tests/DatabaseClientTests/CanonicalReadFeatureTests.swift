@@ -244,4 +244,246 @@ struct CanonicalReadFeatureTests {
         #expect(result.facets["category"]?.first?.value == "search")
         #expect(result.facets["category"]?.first?.count == 10)
     }
+
+    @Test("Polymorphic vector query builder uses logical source and decodes mixed results")
+    func polymorphicVectorQueryUsesLogicalSource() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(try JSONDecoder().decode(QueryRequest.self, from: envelope.payload))
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("article-1"),
+                            "title": .string("Article"),
+                            "body": .string("Body")
+                        ],
+                        annotations: [
+                            "_typeName": .string("TestArticle"),
+                            "_typeCode": .int64(1),
+                            "distance": .double(0.25)
+                        ]
+                    ),
+                    QueryRow(
+                        fields: [
+                            "id": .string("report-1"),
+                            "title": .string("Report"),
+                            "summary": .string("Summary")
+                        ],
+                        annotations: [
+                            "_typeName": .string("TestReport"),
+                            "_typeCode": .int64(2),
+                            "distance": .double(0.5)
+                        ]
+                    )
+                ],
+                continuation: QueryContinuation("poly-vector-next")
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let result = try await context.findPolymorphic(group)
+            .vector(fieldName: "titleEmbedding", dimensions: 3)
+            .indexName("document_title_embedding")
+            .query([0.1, 0.2, 0.3], k: 4)
+            .consistency(.snapshot)
+            .execute()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .logical(let logicalSource) = selectQuery.source,
+              case .index(let accessPath) = selectQuery.accessPath else {
+            Issue.record("Expected logical polymorphic index query")
+            return
+        }
+
+        #expect(logicalSource.kindIdentifier == BuiltinLogicalSourceKind.polymorphic)
+        #expect(logicalSource.identifier == group.identifier)
+        #expect(accessPath.kindIdentifier == "vector")
+        #expect(accessPath.indexName == "document_title_embedding")
+        #expect(accessPath.parameters["fieldName"] == .string("titleEmbedding"))
+        #expect(captured.get()?.options.consistency == .snapshot)
+        #expect(result.items.count == 2)
+        #expect(result.items[0].item is TestArticle)
+        #expect(result.items[1].item is TestReport)
+        #expect(result.items[0].distance == 0.25)
+        #expect(result.continuation == "poly-vector-next")
+    }
+
+    @Test("Polymorphic full-text query builder uses logical source and decodes scores")
+    func polymorphicFullTextQueryUsesLogicalSource() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(try JSONDecoder().decode(QueryRequest.self, from: envelope.payload))
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("article-1"),
+                            "title": .string("Searchable"),
+                            "body": .string("swift vector")
+                        ],
+                        annotations: [
+                            "_typeName": .string("TestArticle"),
+                            "_typeCode": .int64(1),
+                            "score": .double(8.75)
+                        ]
+                    )
+                ]
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let result = try await context.findPolymorphic(group)
+            .fullText(fieldName: "title")
+            .indexName("document_title")
+            .terms(["swift", "vector"], mode: .all)
+            .bm25(k1: 1.4, b: 0.7)
+            .executeWithScores()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .logical(let logicalSource) = selectQuery.source,
+              case .index(let accessPath) = selectQuery.accessPath else {
+            Issue.record("Expected logical polymorphic full-text query")
+            return
+        }
+
+        #expect(logicalSource.identifier == group.identifier)
+        #expect(accessPath.kindIdentifier == "fulltext")
+        #expect(accessPath.indexName == "document_title")
+        #expect(accessPath.parameters["matchMode"] == .string("all"))
+        #expect(accessPath.parameters["returnScores"] == .bool(true))
+        #expect(result.items.count == 1)
+        #expect(result.items[0].item is TestArticle)
+        #expect(result.items[0].score == 8.75)
+    }
+
+    @Test("Polymorphic rank query builder uses logical source and decodes rank annotations")
+    func polymorphicRankQueryUsesLogicalSource() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(try JSONDecoder().decode(QueryRequest.self, from: envelope.payload))
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("rank-1"),
+                            "title": .string("top ranked"),
+                            "body": .string("body")
+                        ],
+                        annotations: [
+                            "_typeName": .string(TestArticle.persistableType),
+                            "_typeCode": .int64(11),
+                            "rank": .int64(0)
+                        ]
+                    )
+                ],
+                continuation: QueryContinuation("next-rank-page")
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let result = try await context.findPolymorphic(group)
+            .rank(fieldName: "score")
+            .top(5)
+            .consistency(.snapshot)
+            .execute()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .logical(let source) = selectQuery.source,
+              case .index(let accessPath) = selectQuery.accessPath else {
+            Issue.record("Expected logical source with index access path")
+            return
+        }
+
+        #expect(source.identifier == group.identifier)
+        #expect(accessPath.kindIdentifier == "rank")
+        #expect(accessPath.parameters["mode"] == .string("top"))
+        #expect(accessPath.parameters["count"] == .int(5))
+        #expect(result.items.count == 1)
+        #expect(result.items[0].rank == 0)
+        #expect((result.items[0].item as? TestArticle)?.title == "top ranked")
+        #expect(result.continuation == "next-rank-page")
+    }
+
+    @Test("Polymorphic bitmap query builder uses logical source and count projection")
+    func polymorphicBitmapQueryUsesLogicalSource() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+
+        let transport = InProcessTransport { envelope in
+            let request = try JSONDecoder().decode(QueryRequest.self, from: envelope.payload)
+            captured.set(request)
+
+            let response: QueryResponse
+            if case .select(let query) = request.statement,
+               case .items(let items) = query.projection,
+               case .aggregate = items.first?.expression {
+                response = QueryResponse(rows: [QueryRow(fields: ["count": .int64(3)])])
+            } else {
+                response = QueryResponse(
+                    rows: [
+                        QueryRow(
+                            fields: [
+                                "id": .string("bitmap-1"),
+                                "title": .string("matched"),
+                                "body": .string("body")
+                            ],
+                            annotations: [
+                                "_typeName": .string(TestArticle.persistableType),
+                                "_typeCode": .int64(7)
+                            ]
+                        )
+                    ]
+                )
+            }
+
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let count = try await context.findPolymorphic(group)
+            .bitmap(fieldName: "category")
+            .equals(.string("tech"))
+            .count()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .index(let accessPath) = selectQuery.accessPath else {
+            Issue.record("Expected index access path")
+            return
+        }
+
+        #expect(accessPath.kindIdentifier == "bitmap")
+        #expect(accessPath.parameters["operation"] == .string("equals"))
+        #expect(accessPath.parameters["values"] == .array([.string("tech")]))
+        #expect(count == 3)
+    }
 }

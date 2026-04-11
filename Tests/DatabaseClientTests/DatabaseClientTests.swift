@@ -66,6 +66,74 @@ struct TestUser: Persistable, Codable, Sendable {
     }
 }
 
+protocol TestDocument: Polymorphable {
+    var id: String { get }
+    var title: String { get }
+}
+
+extension TestDocument {
+    static var polymorphableType: String { "TestDocument" }
+    static var polymorphicDirectoryPathComponents: [any DirectoryPathElement] {
+        [Path("test-documents")]
+    }
+}
+
+struct TestArticle: Persistable, Codable, Sendable, TestDocument {
+    typealias ID = String
+
+    var id: String
+    var title: String
+    var body: String
+
+    static var persistableType: String { "TestArticle" }
+    static var allFields: [String] { ["id", "title", "body"] }
+    static func fieldNumber(for fieldName: String) -> Int? {
+        switch fieldName {
+        case "id": return 1
+        case "title": return 2
+        case "body": return 3
+        default: return nil
+        }
+    }
+    static func enumMetadata(for fieldName: String) -> EnumMetadata? { nil }
+    subscript(dynamicMember member: String) -> (any Sendable)? {
+        switch member {
+        case "id": return id
+        case "title": return title
+        case "body": return body
+        default: return nil
+        }
+    }
+}
+
+struct TestReport: Persistable, Codable, Sendable, TestDocument {
+    typealias ID = String
+
+    var id: String
+    var title: String
+    var summary: String
+
+    static var persistableType: String { "TestReport" }
+    static var allFields: [String] { ["id", "title", "summary"] }
+    static func fieldNumber(for fieldName: String) -> Int? {
+        switch fieldName {
+        case "id": return 1
+        case "title": return 2
+        case "summary": return 3
+        default: return nil
+        }
+    }
+    static func enumMetadata(for fieldName: String) -> EnumMetadata? { nil }
+    subscript(dynamicMember member: String) -> (any Sendable)? {
+        switch member {
+        case "id": return id
+        case "title": return title
+        case "summary": return summary
+        default: return nil
+        }
+    }
+}
+
 // MARK: - Thread-safe capture helper
 
 final class Capture<T: Sendable>: Sendable {
@@ -768,6 +836,71 @@ struct DatabaseContextTests {
         let context = DatabaseContext(transport: transport)
         let entities = try await context.fetchSchema()
         #expect(entities.isEmpty)
+    }
+
+    @Test("fetchSchemaResponse preserves polymorphic groups")
+    func fetchSchemaResponsePreservesPolymorphicGroups() async throws {
+        let group = PolymorphicGroup(
+            identifier: "TestDocument",
+            directoryComponents: [.staticPath("test-documents")],
+            memberTypeNames: ["TestArticle", "TestReport"]
+        )
+        let transport = InProcessTransport { envelope in
+            #expect(envelope.operationID == "schema")
+            let response = SchemaResponse(entities: [], polymorphicGroups: [group])
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "schema",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let response = try await context.fetchSchemaResponse()
+        #expect(response.polymorphicGroups == [group])
+    }
+
+    @Test("protocol-first query decodes mixed polymorphic results")
+    func protocolFirstQueryDecodesMixedPolymorphicResults() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let transport = InProcessTransport { envelope in
+            #expect(envelope.operationID == "query")
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("a1"),
+                            "title": .string("Article"),
+                            "body": .string("Body")
+                        ],
+                        annotations: ["_typeName": .string("TestArticle"), "_typeCode": .int64(TestArticle.typeCode(for: "TestArticle"))]
+                    ),
+                    QueryRow(
+                        fields: [
+                            "id": .string("r1"),
+                            "title": .string("Report"),
+                            "summary": .string("Summary")
+                        ],
+                        annotations: ["_typeName": .string("TestReport"), "_typeCode": .int64(TestReport.typeCode(for: "TestReport"))]
+                    )
+                ],
+                continuation: QueryContinuation("next-page")
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let page = try await context.findPolymorphic(group).executePage()
+
+        #expect(page.items.count == 2)
+        #expect(page.continuation == "next-page")
+        #expect(page.items[0] is TestArticle)
+        #expect(page.items[1] is TestReport)
     }
 }
 
