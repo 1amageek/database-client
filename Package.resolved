@@ -1,6 +1,15 @@
 {
-  "originHash" : "79029996f5a8441d3e85fb213de9a926217e0e33f66c7e2c32601bcc58054731",
+  "originHash" : "364f64ad0da98f00cdee57d8f80ea4e78151ae7260eec59163790dc957655751",
   "pins" : [
+    {
+      "identity" : "database-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/database-kit.git",
+      "state" : {
+        "revision" : "092e90b591cf3a4836bb0509672bf8d5f50a790f",
+        "version" : "26.411.2"
+      }
+    },
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",

@@ -4,6 +4,7 @@ import QueryIR
 import DatabaseClientProtocol
 import Vector
 import FullText
+import Permuted
 
 enum ClientRankReadParameter {
     static let fieldName = "fieldName"
@@ -24,6 +25,123 @@ enum ClientBitmapReadParameter {
     static let equalsOperation = "equals"
     static let inOperation = "in"
     static let andOperation = "and"
+}
+
+enum ClientPermutedReadParameter {
+    static let queryType = "queryType"
+    static let values = "values"
+    static let permutation = "permutation"
+    static let limit = "limit"
+
+    static let prefixQuery = "prefix"
+    static let exactQuery = "exact"
+    static let allQuery = "all"
+}
+
+enum ClientVersionReadParameter {
+    static let primaryKey = "primaryKey"
+    static let limit = "limit"
+    static let indexName = "indexName"
+}
+
+public enum TupleQueryValue: Sendable, Equatable, Hashable, Codable,
+    ExpressibleByStringLiteral,
+    ExpressibleByIntegerLiteral,
+    ExpressibleByFloatLiteral,
+    ExpressibleByBooleanLiteral
+{
+    case string(String)
+    case int(Int64)
+    case double(Double)
+    case bool(Bool)
+    case binary(Data)
+    case uuid(UUID)
+    case date(Date)
+    case float(Float)
+    case uint64(UInt64)
+
+    public init(stringLiteral value: String) {
+        self = .string(value)
+    }
+
+    public init(integerLiteral value: Int64) {
+        self = .int(value)
+    }
+
+    public init(floatLiteral value: Double) {
+        self = .double(value)
+    }
+
+    public init(booleanLiteral value: Bool) {
+        self = .bool(value)
+    }
+
+    public init?(any value: Any) {
+        switch value {
+        case let value as String:
+            self = .string(value)
+        case let value as Bool:
+            self = .bool(value)
+        case let value as Int:
+            self = .int(Int64(value))
+        case let value as Int32:
+            self = .int(Int64(value))
+        case let value as Int64:
+            self = .int(value)
+        case let value as UInt64:
+            self = .uint64(value)
+        case let value as Float:
+            self = .float(value)
+        case let value as Double:
+            self = .double(value)
+        case let value as UUID:
+            self = .uuid(value)
+        case let value as Date:
+            self = .date(value)
+        case let value as Data:
+            self = .binary(value)
+        default:
+            return nil
+        }
+    }
+
+    fileprivate func toQueryParameterValue() -> QueryParameterValue {
+        switch self {
+        case .string(let value):
+            return .string(value)
+        case .int(let value):
+            return .int(value)
+        case .double(let value):
+            return .double(value)
+        case .bool(let value):
+            return .bool(value)
+        case .binary(let value):
+            return .binary(value)
+        case .uuid(let value):
+            return .object([
+                "type": .string("uuid"),
+                "value": .string(value.uuidString)
+            ])
+        case .date(let value):
+            return .object([
+                "type": .string("date"),
+                "value": .double(value.timeIntervalSince1970)
+            ])
+        case .float(let value):
+            return .object([
+                "type": .string("float"),
+                "value": .double(Double(value))
+            ])
+        case .uint64(let value):
+            if let exact = Int64(exactly: value) {
+                return .int(exact)
+            }
+            return .object([
+                "type": .string("uint64"),
+                "value": .string(String(value))
+            ])
+        }
+    }
 }
 
 private enum ClientPolymorphicQueryError: Error, Sendable {
@@ -151,6 +269,64 @@ public struct PolymorphicQueryBuilder: Sendable {
             context: context,
             groupIdentifier: groupIdentifier,
             fieldName: fieldName
+        )
+    }
+
+    public func permuted(
+        indexName: String,
+        permutation: Permutation? = nil
+    ) -> PolymorphicPermutedQueryBuilder {
+        PolymorphicPermutedQueryBuilder(
+            context: context,
+            groupIdentifier: groupIdentifier,
+            indexName: indexName,
+            permutation: permutation
+        )
+    }
+
+    public func reference(
+        typeName: String,
+        idComponents: [TupleQueryValue]
+    ) -> PolymorphicRecordReference {
+        PolymorphicRecordReference(
+            groupIdentifier: groupIdentifier,
+            typeName: typeName,
+            idComponents: idComponents
+        )
+    }
+
+    public func reference<T: Persistable & Polymorphable>(
+        for item: T
+    ) throws -> PolymorphicRecordReference where T.ID: Sendable {
+        guard let id = TupleQueryValue(any: item.id) else {
+            throw ClientPolymorphicQueryError.invalidRequest(
+                "Persistable id for '\(T.persistableType)' cannot be encoded as a tuple query value."
+            )
+        }
+        return PolymorphicRecordReference(
+            groupIdentifier: groupIdentifier,
+            typeName: T.persistableType,
+            idComponents: [id]
+        )
+    }
+
+    public func versionHistory(
+        for reference: PolymorphicRecordReference
+    ) -> PolymorphicVersionQueryBuilder {
+        PolymorphicVersionQueryBuilder(
+            context: context,
+            groupIdentifier: groupIdentifier,
+            reference: reference
+        )
+    }
+
+    public func versionHistory<T: Persistable & Polymorphable>(
+        for item: T
+    ) throws -> PolymorphicVersionQueryBuilder where T.ID: Sendable {
+        PolymorphicVersionQueryBuilder(
+            context: context,
+            groupIdentifier: groupIdentifier,
+            reference: try reference(for: item)
         )
     }
 
@@ -765,9 +941,9 @@ public struct PolymorphicRankQueryBuilder: Sendable {
 
 public struct PolymorphicBitmapQueryBuilder: Sendable {
     private enum Operation: Sendable {
-        case equals(QueryParameterValue)
-        case `in`([QueryParameterValue])
-        case and([[QueryParameterValue]])
+        case equals(TupleQueryValue)
+        case `in`([TupleQueryValue])
+        case and([[TupleQueryValue]])
     }
 
     private let context: DatabaseContext
@@ -789,19 +965,19 @@ public struct PolymorphicBitmapQueryBuilder: Sendable {
         self.fieldName = fieldName
     }
 
-    public func equals(_ value: QueryParameterValue) -> Self {
+    public func equals(_ value: TupleQueryValue) -> Self {
         var copy = self
         copy.operation = .equals(value)
         return copy
     }
 
-    public func `in`(_ values: [QueryParameterValue]) -> Self {
+    public func `in`(_ values: [TupleQueryValue]) -> Self {
         var copy = self
         copy.operation = .in(values)
         return copy
     }
 
-    public func all(_ valueSets: [[QueryParameterValue]]) -> Self {
+    public func all(_ valueSets: [[TupleQueryValue]]) -> Self {
         var copy = self
         copy.operation = .and(valueSets)
         return copy
@@ -897,13 +1073,19 @@ public struct PolymorphicBitmapQueryBuilder: Sendable {
         switch operation {
         case .equals(let value):
             parameters[ClientBitmapReadParameter.operation] = .string(ClientBitmapReadParameter.equalsOperation)
-            parameters[ClientBitmapReadParameter.values] = .array([value])
+            parameters[ClientBitmapReadParameter.values] = .array([value.toQueryParameterValue()])
         case .in(let values):
             parameters[ClientBitmapReadParameter.operation] = .string(ClientBitmapReadParameter.inOperation)
-            parameters[ClientBitmapReadParameter.values] = .array(values)
+            parameters[ClientBitmapReadParameter.values] = .array(
+                values.map { $0.toQueryParameterValue() }
+            )
         case .and(let valueSets):
             parameters[ClientBitmapReadParameter.operation] = .string(ClientBitmapReadParameter.andOperation)
-            parameters[ClientBitmapReadParameter.valueSets] = .array(valueSets.map(QueryParameterValue.array))
+            parameters[ClientBitmapReadParameter.valueSets] = .array(
+                valueSets.map { valueSet in
+                    .array(valueSet.map { $0.toQueryParameterValue() })
+                }
+            )
         }
 
         return SelectQuery(
@@ -923,5 +1105,303 @@ public struct PolymorphicBitmapQueryBuilder: Sendable {
             ),
             limit: limitCount
         )
+    }
+}
+
+public struct PolymorphicPermutedQueryBuilder: Sendable {
+    private enum QueryType: Sendable {
+        case prefix([TupleQueryValue])
+        case exact([TupleQueryValue])
+        case all
+    }
+
+    private let context: DatabaseContext
+    private let groupIdentifier: String
+    private let indexName: String
+    private let permutation: Permutation?
+    private var queryType: QueryType = .all
+    private var limitCount: Int?
+    private var partitionValues: [String: String]?
+    private var options: ReadExecutionOptions = .default
+
+    init(
+        context: DatabaseContext,
+        groupIdentifier: String,
+        indexName: String,
+        permutation: Permutation?
+    ) {
+        self.context = context
+        self.groupIdentifier = groupIdentifier
+        self.indexName = indexName
+        self.permutation = permutation
+    }
+
+    public func prefix(_ values: [TupleQueryValue]) -> Self {
+        var copy = self
+        copy.queryType = .prefix(values)
+        return copy
+    }
+
+    public func exact(_ values: [TupleQueryValue]) -> Self {
+        var copy = self
+        copy.queryType = .exact(values)
+        return copy
+    }
+
+    public func all() -> Self {
+        var copy = self
+        copy.queryType = .all
+        return copy
+    }
+
+    public func limit(_ count: Int) -> Self {
+        var copy = self
+        copy.limitCount = count
+        return copy
+    }
+
+    public func partition(_ values: [String: String]) -> Self {
+        var copy = self
+        copy.partitionValues = values
+        return copy
+    }
+
+    public func continuation(_ token: String) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: copy.options.pageSize,
+            continuation: QueryContinuation(token)
+        )
+        return copy
+    }
+
+    public func pageSize(_ count: Int) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: count,
+            continuation: copy.options.continuation
+        )
+        return copy
+    }
+
+    public func consistency(_ consistency: ReadConsistency) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: consistency,
+            pageSize: copy.options.pageSize,
+            continuation: copy.options.continuation
+        )
+        return copy
+    }
+
+    public func execute() async throws -> PolymorphicPermutedQueryResult {
+        let response = try await context.query(
+            toSelectQuery(),
+            options: options,
+            partitionValues: partitionValues
+        )
+        let items = try response.rows.map { row in
+            try context.decodePolymorphicRow(row, groupIdentifier: groupIdentifier)
+        }
+        return PolymorphicPermutedQueryResult(
+            items: items,
+            continuation: response.continuation?.token
+        )
+    }
+
+    private func toSelectQuery() -> SelectQuery {
+        var parameters: [String: QueryParameterValue] = [:]
+        if let permutation {
+            parameters[ClientPermutedReadParameter.permutation] = .array(
+                permutation.indices.map { .int(Int64($0)) }
+            )
+        }
+        if let limitCount {
+            parameters[ClientPermutedReadParameter.limit] = .int(Int64(limitCount))
+        }
+
+        switch queryType {
+        case .prefix(let values):
+            parameters[ClientPermutedReadParameter.queryType] = .string(ClientPermutedReadParameter.prefixQuery)
+            parameters[ClientPermutedReadParameter.values] = .array(values.map { $0.toQueryParameterValue() })
+        case .exact(let values):
+            parameters[ClientPermutedReadParameter.queryType] = .string(ClientPermutedReadParameter.exactQuery)
+            parameters[ClientPermutedReadParameter.values] = .array(values.map { $0.toQueryParameterValue() })
+        case .all:
+            parameters[ClientPermutedReadParameter.queryType] = .string(ClientPermutedReadParameter.allQuery)
+        }
+
+        return SelectQuery(
+            projection: .all,
+            source: .logical(
+                LogicalSourceRef(
+                    kindIdentifier: BuiltinLogicalSourceKind.polymorphic,
+                    identifier: groupIdentifier
+                )
+            ),
+            accessPath: .index(
+                IndexScanSource(
+                    indexName: indexName,
+                    kindIdentifier: "permuted",
+                    parameters: parameters
+                )
+            ),
+            limit: limitCount
+        )
+    }
+}
+
+public struct PolymorphicVersionQueryBuilder: Sendable {
+    private let context: DatabaseContext
+    private let groupIdentifier: String
+    private let reference: PolymorphicRecordReference
+    private var limitCount: Int?
+    private var indexNameOverride: String?
+    private var partitionValues: [String: String]?
+    private var options: ReadExecutionOptions = .default
+
+    init(
+        context: DatabaseContext,
+        groupIdentifier: String,
+        reference: PolymorphicRecordReference
+    ) {
+        self.context = context
+        self.groupIdentifier = groupIdentifier
+        self.reference = reference
+    }
+
+    public func limit(_ count: Int) -> Self {
+        var copy = self
+        copy.limitCount = count
+        return copy
+    }
+
+    public func indexName(_ name: String) -> Self {
+        var copy = self
+        copy.indexNameOverride = name
+        return copy
+    }
+
+    public func partition(_ values: [String: String]) -> Self {
+        var copy = self
+        copy.partitionValues = values
+        return copy
+    }
+
+    public func continuation(_ token: String) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: copy.options.pageSize,
+            continuation: QueryContinuation(token)
+        )
+        return copy
+    }
+
+    public func pageSize(_ count: Int) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: count,
+            continuation: copy.options.continuation
+        )
+        return copy
+    }
+
+    public func consistency(_ consistency: ReadConsistency) -> Self {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: consistency,
+            pageSize: copy.options.pageSize,
+            continuation: copy.options.continuation
+        )
+        return copy
+    }
+
+    public func execute() async throws -> PolymorphicVersionQueryResult {
+        let response = try await context.query(
+            try toSelectQuery(),
+            options: options,
+            partitionValues: partitionValues
+        )
+
+        let items: [(version: RecordVersion, item: any Persistable)] = try response.rows.map { row in
+            guard let versionData = row.annotations["version"]?.dataValue else {
+                throw ServiceError(
+                    code: "INVALID_RESPONSE",
+                    message: "Polymorphic version query response is missing version annotation."
+                )
+            }
+            return (
+                version: RecordVersion(bytes: versionData),
+                item: try context.decodePolymorphicRow(row, groupIdentifier: groupIdentifier)
+            )
+        }
+
+        return PolymorphicVersionQueryResult(
+            items: items,
+            continuation: response.continuation?.token
+        )
+    }
+
+    public func latest() async throws -> (version: RecordVersion, item: any Persistable)? {
+        try await limit(1).execute().items.first
+    }
+
+    private func toSelectQuery() throws -> SelectQuery {
+        guard reference.groupIdentifier == groupIdentifier else {
+            throw ClientPolymorphicQueryError.invalidRequest(
+                "Polymorphic record reference for '\(reference.groupIdentifier)' cannot be queried from '\(groupIdentifier)'."
+            )
+        }
+
+        let typeCode = try context.polymorphicTypeCode(
+            groupIdentifier: groupIdentifier,
+            typeName: reference.typeName
+        )
+        let primaryKey = [
+            QueryParameterValue.int(typeCode)
+        ] + reference.idComponents.map { $0.toQueryParameterValue() }
+
+        var parameters: [String: QueryParameterValue] = [
+            ClientVersionReadParameter.primaryKey: .array(primaryKey)
+        ]
+        if let limitCount {
+            parameters[ClientVersionReadParameter.limit] = .int(Int64(limitCount))
+        }
+        if let indexNameOverride {
+            parameters[ClientVersionReadParameter.indexName] = .string(indexNameOverride)
+        }
+
+        return SelectQuery(
+            projection: .all,
+            source: .logical(
+                LogicalSourceRef(
+                    kindIdentifier: BuiltinLogicalSourceKind.polymorphic,
+                    identifier: groupIdentifier
+                )
+            ),
+            accessPath: .index(
+                IndexScanSource(
+                    indexName: buildIndexName(),
+                    kindIdentifier: "version",
+                    parameters: parameters
+                )
+            ),
+            limit: limitCount
+        )
+    }
+
+    private func buildIndexName() -> String {
+        if let indexNameOverride {
+            return indexNameOverride
+        }
+        if let group = context.schema?.polymorphicGroup(identifier: groupIdentifier),
+           let descriptor = group.indexes.first(where: { $0.kindIdentifier == "version" }) {
+            return descriptor.name
+        }
+        return "\(groupIdentifier)_version_id"
     }
 }

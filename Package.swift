@@ -14,7 +14,7 @@ let package = Package(
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
     ],
     dependencies: [
-        .package(path: "../database-kit"),
+        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0411.2"),
     ],
     targets: [
         .target(
@@ -25,6 +25,7 @@ let package = Package(
                 .product(name: "DatabaseClientProtocol", package: "database-kit"),
                 .product(name: "Vector", package: "database-kit"),
                 .product(name: "FullText", package: "database-kit"),
+                .product(name: "Permuted", package: "database-kit"),
             ]
         ),
         .testTarget(

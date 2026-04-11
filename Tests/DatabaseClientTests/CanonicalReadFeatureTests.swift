@@ -4,6 +4,7 @@ import Core
 import QueryIR
 import DatabaseClientProtocol
 import Vector
+import Permuted
 @testable import DatabaseClient
 
 struct VectorDocument: Persistable, Codable, Sendable {
@@ -472,7 +473,7 @@ struct CanonicalReadFeatureTests {
         let context = DatabaseContext(transport: transport, localSchema: schema)
         let count = try await context.findPolymorphic(group)
             .bitmap(fieldName: "category")
-            .equals(.string("tech"))
+            .equals("tech")
             .count()
 
         guard case .select(let selectQuery) = captured.get()!.statement,
@@ -485,5 +486,120 @@ struct CanonicalReadFeatureTests {
         #expect(accessPath.parameters["operation"] == .string("equals"))
         #expect(accessPath.parameters["values"] == .array([.string("tech")]))
         #expect(count == 3)
+    }
+
+    @Test("Polymorphic permuted query builder uses logical source and permutation metadata")
+    func polymorphicPermutedQueryUsesLogicalSource() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(try JSONDecoder().decode(QueryRequest.self, from: envelope.payload))
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("permuted-1"),
+                            "title": .string("Tokyo"),
+                            "body": .string("Body")
+                        ],
+                        annotations: [
+                            "_typeName": .string(TestArticle.persistableType),
+                            "_typeCode": .int64(7)
+                        ]
+                    )
+                ],
+                continuation: QueryContinuation("next-permuted-page")
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let result = try await context.findPolymorphic(group)
+            .permuted(
+                indexName: "document_location",
+                permutation: try Permutation(indices: [1, 0])
+            )
+            .prefix(["tokyo"])
+            .limit(5)
+            .execute()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .index(let accessPath) = selectQuery.accessPath else {
+            Issue.record("Expected index access path")
+            return
+        }
+
+        #expect(accessPath.kindIdentifier == "permuted")
+        #expect(accessPath.indexName == "document_location")
+        #expect(accessPath.parameters["queryType"] == .string("prefix"))
+        #expect(accessPath.parameters["values"] == .array([.string("tokyo")]))
+        #expect(accessPath.parameters["permutation"] == .array([.int(1), .int(0)]))
+        #expect(result.items.count == 1)
+        #expect(result.items[0] is TestArticle)
+        #expect(result.continuation == "next-permuted-page")
+    }
+
+    @Test("Polymorphic version query builder encodes composite primary key and decodes version annotation")
+    func polymorphicVersionQueryUsesReference() async throws {
+        let schema = Schema([TestArticle.self, TestReport.self])
+        let group = try #require(schema.polymorphicGroup(identifier: "TestDocument"))
+        let captured = Capture<QueryRequest>()
+        let versionBytes = Data([0, 0, 0, 0, 0, 0, 0, 2, 0, 1])
+
+        let transport = InProcessTransport { envelope in
+            captured.set(try JSONDecoder().decode(QueryRequest.self, from: envelope.payload))
+            let response = QueryResponse(
+                rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("versioned-1"),
+                            "title": .string("Versioned"),
+                            "body": .string("Body")
+                        ],
+                        annotations: [
+                            "_typeName": .string(TestArticle.persistableType),
+                            "_typeCode": .int64(TestArticle.typeCode(for: TestArticle.persistableType)),
+                            "version": .data(versionBytes)
+                        ]
+                    )
+                ],
+                continuation: QueryContinuation("next-version-page")
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport, localSchema: schema)
+        let article = TestArticle(id: "versioned-1", title: "Versioned", body: "Body")
+        let result = try await context.findPolymorphic(group)
+            .versionHistory(for: article)
+            .limit(10)
+            .execute()
+
+        guard case .select(let selectQuery) = captured.get()!.statement,
+              case .index(let accessPath) = selectQuery.accessPath,
+              let primaryKey = accessPath.parameters["primaryKey"]?.arrayValue else {
+            Issue.record("Expected version access path with primary key")
+            return
+        }
+
+        #expect(accessPath.kindIdentifier == "version")
+        #expect(accessPath.indexName == "TestDocument_version_id")
+        #expect(primaryKey.count == 2)
+        #expect(primaryKey[0] == .int(TestArticle.typeCode(for: TestArticle.persistableType)))
+        #expect(primaryKey[1] == .string(article.id))
+        #expect(result.items.count == 1)
+        #expect(result.items[0].version == RecordVersion(bytes: versionBytes))
+        #expect((result.items[0].item as? TestArticle)?.id == article.id)
+        #expect(result.continuation == "next-version-page")
     }
 }

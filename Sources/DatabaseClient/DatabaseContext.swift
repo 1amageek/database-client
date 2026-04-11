@@ -264,4 +264,30 @@ public final class DatabaseContext: Sendable {
         }
         return try FieldValueDecoder.decodeAny(row.fields, as: type)
     }
+
+    func polymorphicTypeCode(
+        groupIdentifier: String,
+        typeName: String
+    ) throws -> Int64 {
+        guard let schema = localSchema else {
+            throw ServiceError(
+                code: "SCHEMA_REQUIRED",
+                message: "A local Schema is required to resolve polymorphic type codes for '\(groupIdentifier)'."
+            )
+        }
+        guard schema.polymorphicGroup(identifier: groupIdentifier) != nil else {
+            throw ServiceError(
+                code: "UNKNOWN_POLYMORPHIC_GROUP",
+                message: "Polymorphic group '\(groupIdentifier)' is not registered in the local Schema."
+            )
+        }
+        guard let type = schema.entity(named: typeName)?.persistableType,
+              let polymorphicType = type as? any Polymorphable.Type else {
+            throw ServiceError(
+                code: "UNKNOWN_PERSISTABLE_TYPE",
+                message: "Concrete type '\(typeName)' is not registered as a polymorphic member."
+            )
+        }
+        return polymorphicType.typeCode(for: type.persistableType)
+    }
 }
