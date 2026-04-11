@@ -246,23 +246,42 @@ struct ExpressionCodableTests {
         #expect(original == decoded)
     }
 
-    @Test("FetchRequest roundtrip")
-    func fetchRequestRoundtrip() throws {
-        let original = FetchRequest(
-            entityName: "TestUser",
-            predicate: \TestUser.age > 20,
-            sortDescriptors: [
-                SortKey(.column(ColumnRef(column: "name")), direction: .ascending)
-            ],
-            limit: 10,
+    @Test("QueryRequest roundtrip")
+    func queryRequestRoundtrip() throws {
+        let original = QueryRequest(
+            statement: .select(
+                SelectQuery(
+                    projection: .all,
+                    source: .table(TableRef(table: "TestUser")),
+                    filter: \TestUser.age > 20,
+                    orderBy: [
+                        SortKey(.column(ColumnRef(column: "name")), direction: .ascending)
+                    ],
+                    limit: 10
+                )
+            ),
+            options: ReadExecutionOptions(
+                consistency: .snapshot,
+                pageSize: 25,
+                continuation: QueryContinuation("next-page")
+            ),
             partitionValues: ["tenantId": "t1"]
         )
         let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(FetchRequest.self, from: data)
-        #expect(decoded.entityName == "TestUser")
-        #expect(decoded.predicate == original.predicate)
-        #expect(decoded.sortDescriptors == original.sortDescriptors)
-        #expect(decoded.limit == 10)
+        let decoded = try JSONDecoder().decode(QueryRequest.self, from: data)
+        guard case .select(let selectQuery) = decoded.statement else {
+            Issue.record("Expected select statement")
+            return
+        }
+        #expect(selectQuery.source == .table(TableRef(table: "TestUser")))
+        #expect(selectQuery.filter == (\TestUser.age > 20))
+        #expect(selectQuery.orderBy == [
+            SortKey(.column(ColumnRef(column: "name")), direction: .ascending)
+        ])
+        #expect(selectQuery.limit == 10)
+        #expect(decoded.options.consistency == .snapshot)
+        #expect(decoded.options.pageSize == 25)
+        #expect(decoded.options.continuation?.token == "next-page")
         #expect(decoded.partitionValues == ["tenantId": "t1"])
     }
 }
@@ -278,10 +297,10 @@ struct QueryBuilderTests {
 
         let transport = InProcessTransport { envelope in
             captured.set(envelope.payload)
-            let response = FetchResponse(records: [])
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -292,9 +311,14 @@ struct QueryBuilderTests {
             .where(\TestUser.name == "Alice")
             .execute()
 
-        let request = try JSONDecoder().decode(FetchRequest.self, from: captured.get()!)
-        guard case .and(let lhs, let rhs) = request.predicate else {
-            Issue.record("Expected .and predicate, got \(String(describing: request.predicate))")
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        guard case .select(let selectQuery) = request.statement,
+              let predicate = selectQuery.filter else {
+            Issue.record("Expected select predicate")
+            return
+        }
+        guard case .and(let lhs, let rhs) = predicate else {
+            Issue.record("Expected .and predicate, got \(String(describing: predicate))")
             return
         }
         guard case .greaterThan = lhs else {
@@ -313,10 +337,10 @@ struct QueryBuilderTests {
 
         let transport = InProcessTransport { envelope in
             captured.set(envelope.payload)
-            let response = FetchResponse(records: [])
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -327,10 +351,15 @@ struct QueryBuilderTests {
             .sort(by: \TestUser.age, ascending: false)
             .execute()
 
-        let request = try JSONDecoder().decode(FetchRequest.self, from: captured.get()!)
-        #expect(request.sortDescriptors.count == 2)
-        #expect(request.sortDescriptors[0].direction == .ascending)
-        #expect(request.sortDescriptors[1].direction == .descending)
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        guard case .select(let selectQuery) = request.statement,
+              let sortDescriptors = selectQuery.orderBy else {
+            Issue.record("Expected sort descriptors")
+            return
+        }
+        #expect(sortDescriptors.count == 2)
+        #expect(sortDescriptors[0].direction == .ascending)
+        #expect(sortDescriptors[1].direction == .descending)
     }
 
     @Test("limit sets maximum results")
@@ -339,10 +368,10 @@ struct QueryBuilderTests {
 
         let transport = InProcessTransport { envelope in
             captured.set(envelope.payload)
-            let response = FetchResponse(records: [])
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -350,8 +379,12 @@ struct QueryBuilderTests {
         let context = DatabaseContext(transport: transport)
         _ = try await context.find(TestUser.self).limit(25).execute()
 
-        let request = try JSONDecoder().decode(FetchRequest.self, from: captured.get()!)
-        #expect(request.limit == 25)
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        guard case .select(let selectQuery) = request.statement else {
+            Issue.record("Expected select statement")
+            return
+        }
+        #expect(selectQuery.limit == 25)
     }
 
     @Test("partition sets partition values")
@@ -360,10 +393,10 @@ struct QueryBuilderTests {
 
         let transport = InProcessTransport { envelope in
             captured.set(envelope.payload)
-            let response = FetchResponse(records: [])
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -373,7 +406,7 @@ struct QueryBuilderTests {
             .partition(["tenantId": "t_123"])
             .execute()
 
-        let request = try JSONDecoder().decode(FetchRequest.self, from: captured.get()!)
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
         #expect(request.partitionValues == ["tenantId": "t_123"])
     }
 
@@ -383,10 +416,10 @@ struct QueryBuilderTests {
 
         let transport = InProcessTransport { envelope in
             captured.set(envelope.payload)
-            let response = FetchResponse(records: [])
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -396,21 +429,44 @@ struct QueryBuilderTests {
             .continuation("abc123")
             .execute()
 
-        let request = try JSONDecoder().decode(FetchRequest.self, from: captured.get()!)
-        #expect(request.continuation == "abc123")
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        #expect(request.options.continuation?.token == "abc123")
+    }
+
+    @Test("consistency sets read consistency option")
+    func consistencySetsOption() async throws {
+        let captured = Capture<Data>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(envelope.payload)
+            let response = QueryResponse(rows: [])
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        _ = try await context.find(TestUser.self)
+            .consistency(.snapshot)
+            .execute()
+
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        #expect(request.options.consistency == .snapshot)
     }
 
     @Test("execute decodes response items and continuation")
     func executeDecodesItems() async throws {
         let transport = InProcessTransport { envelope in
-            let records: [[String: FieldValue]] = [
-                ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)],
-                ["id": .string("u2"), "name": .string("Bob"), "age": .int64(25), "active": .bool(true)],
+            let rows: [QueryRow] = [
+                QueryRow(fields: ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)]),
+                QueryRow(fields: ["id": .string("u2"), "name": .string("Bob"), "age": .int64(25), "active": .bool(true)]),
             ]
-            let response = FetchResponse(records: records, continuation: "next-token")
+            let response = QueryResponse(rows: rows, continuation: QueryContinuation("next-token"))
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -429,13 +485,13 @@ struct QueryBuilderTests {
     @Test("first sets limit to 1 and returns single item")
     func firstReturnsSingle() async throws {
         let transport = InProcessTransport { envelope in
-            let records: [[String: FieldValue]] = [
-                ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)],
+            let rows: [QueryRow] = [
+                QueryRow(fields: ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)]),
             ]
-            let response = FetchResponse(records: records)
+            let response = QueryResponse(rows: rows)
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -445,14 +501,27 @@ struct QueryBuilderTests {
         #expect(user?.name == "Alice")
     }
 
-    @Test("count sends count operation")
-    func countSendsCountOp() async throws {
+    @Test("count sends aggregate query")
+    func countSendsAggregateQuery() async throws {
         let transport = InProcessTransport { envelope in
-            #expect(envelope.operationID == "count")
-            let response = CountResponse(count: 42)
+            #expect(envelope.operationID == "query")
+            let request = try JSONDecoder().decode(QueryRequest.self, from: envelope.payload)
+            guard case .select(let selectQuery) = request.statement else {
+                Issue.record("Expected select statement")
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: "query",
+                    errorCode: "INVALID",
+                    errorMessage: "Expected select"
+                )
+            }
+            #expect(selectQuery.projection == .items([
+                ProjectionItem(.aggregate(.count(nil, distinct: false)), alias: "count")
+            ]))
+            let response = QueryResponse(rows: [QueryRow(fields: ["count": .int64(42)])])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "count",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -470,7 +539,7 @@ struct QueryBuilderTests {
         let transport = InProcessTransport { envelope in
             ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "fetch",
+                operationID: "query",
                 errorCode: "NOT_FOUND",
                 errorMessage: "Entity not found"
             )
@@ -647,15 +716,15 @@ struct DatabaseContextTests {
     @Test("get decodes record by ID")
     func getDecodesRecord() async throws {
         let transport = InProcessTransport { envelope in
-            #expect(envelope.operationID == "get")
-            let record: [String: FieldValue] = [
+            #expect(envelope.operationID == "query")
+            let record = QueryRow(fields: [
                 "id": .string("u1"), "name": .string("Alice"),
                 "age": .int64(30), "active": .bool(true)
-            ]
-            let response = GetResponse(record: record)
+            ])
+            let response = QueryResponse(rows: [record])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "get",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -671,10 +740,10 @@ struct DatabaseContextTests {
     @Test("get returns nil for missing record")
     func getReturnsNilWhenMissing() async throws {
         let transport = InProcessTransport { envelope in
-            let response = GetResponse(record: nil)
+            let response = QueryResponse(rows: [])
             return ServiceEnvelope(
                 responseTo: envelope.requestID,
-                operationID: "get",
+                operationID: "query",
                 payload: try JSONEncoder().encode(response)
             )
         }
@@ -738,8 +807,8 @@ struct ServiceEnvelopeTests {
 
     @Test("request envelope has correct defaults")
     func requestEnvelopeDefaults() {
-        let envelope = ServiceEnvelope(operationID: "fetch")
-        #expect(envelope.operationID == "fetch")
+        let envelope = ServiceEnvelope(operationID: "query")
+        #expect(envelope.operationID == "query")
         #expect(envelope.version == 1)
         #expect(envelope.isError == nil)
         #expect(envelope.errorCode == nil)
@@ -749,7 +818,7 @@ struct ServiceEnvelopeTests {
     func errorEnvelopeFields() {
         let envelope = ServiceEnvelope(
             responseTo: "req-1",
-            operationID: "fetch",
+            operationID: "query",
             errorCode: "NOT_FOUND",
             errorMessage: "Not found"
         )

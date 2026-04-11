@@ -1,5 +1,6 @@
 import Foundation
 import Core
+import QueryIR
 import DatabaseClientProtocol
 import Synchronization
 
@@ -114,11 +115,29 @@ public final class DatabaseContext: Sendable {
         QueryBuilder<T>(transport: transport, entityName: T.persistableType)
     }
 
-    /// Get a single record by ID
-    public func get<T: Persistable>(_ type: T.Type, id: String, partitionValues: [String: String]? = nil) async throws -> T? {
-        let getReq = GetRequest(entityName: T.persistableType, id: id, partitionValues: partitionValues)
-        let payload = try JSONEncoder().encode(getReq)
-        let envelope = ServiceEnvelope(operationID: "get", payload: payload)
+    /// Start a vector similarity query using the canonical read route.
+    public func findSimilar<T: Persistable>(_ type: T.Type) -> VectorEntryPoint<T> {
+        VectorEntryPoint(context: self)
+    }
+
+    /// Start a full-text query using the canonical read route.
+    public func search<T: Persistable>(_ type: T.Type) -> FullTextEntryPoint<T> {
+        FullTextEntryPoint(context: self)
+    }
+
+    /// Execute a canonical query and return wire-level rows.
+    public func query(
+        _ selectQuery: SelectQuery,
+        options: ReadExecutionOptions = .default,
+        partitionValues: [String: String]? = nil
+    ) async throws -> QueryResponse {
+        let request = QueryRequest(
+            statement: .select(selectQuery),
+            options: options,
+            partitionValues: partitionValues
+        )
+        let payload = try JSONEncoder().encode(request)
+        let envelope = ServiceEnvelope(operationID: "query", payload: payload)
         let response = try await transport.send(envelope)
 
         if response.isError == true {
@@ -128,9 +147,44 @@ public final class DatabaseContext: Sendable {
             )
         }
 
-        let getResponse = try JSONDecoder().decode(GetResponse.self, from: response.payload)
-        guard let dict = getResponse.record else { return nil }
-        return try FieldValueDecoder.decode(dict)
+        return try JSONDecoder().decode(QueryResponse.self, from: response.payload)
+    }
+
+    /// Execute a canonical query and decode typed records with annotations.
+    public func query<T: Persistable>(
+        _ selectQuery: SelectQuery,
+        as type: T.Type,
+        options: ReadExecutionOptions = .default,
+        partitionValues: [String: String]? = nil
+    ) async throws -> AnnotatedQueryResult<T> {
+        let response = try await query(
+            selectQuery,
+            options: options,
+            partitionValues: partitionValues
+        )
+        let records: [AnnotatedRecord<T>] = try response.rows.map { row in
+            AnnotatedRecord<T>(
+                item: try FieldValueDecoder.decode(row.fields),
+                annotations: row.annotations
+            )
+        }
+        return AnnotatedQueryResult(
+            records: records,
+            continuation: response.continuation?.token,
+            metadata: response.metadata
+        )
+    }
+
+    /// Get a single record by ID via canonical query execution.
+    public func get<T: Persistable>(_ type: T.Type, id: String, partitionValues: [String: String]? = nil) async throws -> T? {
+        let selectQuery = SelectQuery(
+            projection: .all,
+            source: .table(TableRef(table: T.persistableType)),
+            filter: .equal(.column(ColumnRef(column: "id")), .literal(.string(id))),
+            limit: 1
+        )
+        let result = try await query(selectQuery, as: type, partitionValues: partitionValues)
+        return result.items.first
     }
 
     /// Fetch schema information from the server

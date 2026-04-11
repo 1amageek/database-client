@@ -3,153 +3,200 @@ import Core
 import QueryIR
 import DatabaseClientProtocol
 
-/// Fluent query builder for remote database queries
-///
-/// Constructed via `DatabaseContext.find(_:)`. Supports KeyPath-based
-/// predicates, sorting, pagination, and limit.
+/// Fluent query builder for remote database queries.
 public struct QueryBuilder<T: Persistable>: Sendable {
-
     private let transport: any DatabaseTransport
-    private var request: FetchRequest
+    private let entityName: String
+    private var selectQuery: SelectQuery
+    private var options: ReadExecutionOptions
+    private var partitionValues: [String: String]?
 
     init(transport: any DatabaseTransport, entityName: String) {
         self.transport = transport
-        self.request = FetchRequest(entityName: entityName)
+        self.entityName = entityName
+        self.selectQuery = SelectQuery(
+            projection: .all,
+            source: .table(TableRef(table: entityName))
+        )
+        self.options = .default
+        self.partitionValues = nil
     }
 
-    /// Add a predicate filter (QueryIR.Expression)
     public func `where`(_ predicate: QueryIR.Expression) -> QueryBuilder<T> {
         var copy = self
-        if let existing = copy.request.predicate {
-            // Combine with AND
-            copy.request = FetchRequest(
-                entityName: request.entityName,
-                predicate: .and(existing, predicate),
-                sortDescriptors: request.sortDescriptors,
-                limit: request.limit,
-                continuation: request.continuation,
-                partitionValues: request.partitionValues
-            )
+        let combinedFilter: QueryIR.Expression
+        if let existing = copy.selectQuery.filter {
+            combinedFilter = .and(existing, predicate)
         } else {
-            copy.request = FetchRequest(
-                entityName: request.entityName,
-                predicate: predicate,
-                sortDescriptors: request.sortDescriptors,
-                limit: request.limit,
-                continuation: request.continuation,
-                partitionValues: request.partitionValues
-            )
+            combinedFilter = predicate
         }
+        copy.selectQuery = copy.selectQuery.replacing(filter: combinedFilter)
         return copy
     }
 
-    /// Add a sort descriptor using KeyPath
     public func sort<V: FieldValueConvertible>(
         by keyPath: KeyPath<T, V>,
         ascending: Bool = true
     ) -> QueryBuilder<T> {
         var copy = self
-        var sorts = copy.request.sortDescriptors
+        var sorts = copy.selectQuery.orderBy ?? []
         sorts.append(SortKey(
             .column(ColumnRef(column: T.fieldName(for: keyPath))),
             direction: ascending ? .ascending : .descending
         ))
-        copy.request = FetchRequest(
-            entityName: request.entityName,
-            predicate: request.predicate,
-            sortDescriptors: sorts,
-            limit: request.limit,
-            continuation: request.continuation,
-            partitionValues: request.partitionValues
-        )
+        copy.selectQuery = copy.selectQuery.replacing(orderBy: sorts)
         return copy
     }
 
-    /// Set maximum number of results
     public func limit(_ count: Int) -> QueryBuilder<T> {
         var copy = self
-        copy.request = FetchRequest(
-            entityName: request.entityName,
-            predicate: request.predicate,
-            sortDescriptors: request.sortDescriptors,
-            limit: count,
-            continuation: request.continuation,
-            partitionValues: request.partitionValues
-        )
+        copy.selectQuery = copy.selectQuery.replacing(limit: count)
         return copy
     }
 
-    /// Set partition values for dynamic directory types
     public func partition(_ values: [String: String]) -> QueryBuilder<T> {
         var copy = self
-        copy.request = FetchRequest(
-            entityName: request.entityName,
-            predicate: request.predicate,
-            sortDescriptors: request.sortDescriptors,
-            limit: request.limit,
-            continuation: request.continuation,
-            partitionValues: values
-        )
+        copy.partitionValues = values
         return copy
     }
 
-    /// Continue from a previous query result
     public func continuation(_ token: String) -> QueryBuilder<T> {
         var copy = self
-        copy.request = FetchRequest(
-            entityName: request.entityName,
-            predicate: request.predicate,
-            sortDescriptors: request.sortDescriptors,
-            limit: request.limit,
-            continuation: token,
-            partitionValues: request.partitionValues
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: copy.options.pageSize,
+            continuation: QueryContinuation(token)
         )
         return copy
     }
 
-    /// Execute the query and return paginated results
-    public func execute() async throws -> QueryResult<T> {
-        let payload = try JSONEncoder().encode(request)
-        let envelope = ServiceEnvelope(operationID: "fetch", payload: payload)
-        let response = try await transport.send(envelope)
-
-        if response.isError == true {
-            throw ServiceError(
-                code: response.errorCode ?? "UNKNOWN",
-                message: response.errorMessage ?? "Unknown error"
-            )
-        }
-
-        let fetchResponse = try JSONDecoder().decode(FetchResponse.self, from: response.payload)
-        let items: [T] = try fetchResponse.records.map { try FieldValueDecoder.decode($0) }
-        return QueryResult(items: items, continuation: fetchResponse.continuation)
-    }
-
-    /// Execute the query and return the count
-    public func count() async throws -> Int {
-        let countReq = CountRequest(
-            entityName: request.entityName,
-            predicate: request.predicate,
-            partitionValues: request.partitionValues
+    public func pageSize(_ count: Int) -> QueryBuilder<T> {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: copy.options.consistency,
+            pageSize: count,
+            continuation: copy.options.continuation
         )
-        let payload = try JSONEncoder().encode(countReq)
-        let envelope = ServiceEnvelope(operationID: "count", payload: payload)
-        let response = try await transport.send(envelope)
+        return copy
+    }
 
-        if response.isError == true {
+    public func consistency(_ consistency: ReadConsistency) -> QueryBuilder<T> {
+        var copy = self
+        copy.options = ReadExecutionOptions(
+            consistency: consistency,
+            pageSize: copy.options.pageSize,
+            continuation: copy.options.continuation
+        )
+        return copy
+    }
+
+    public func execute() async throws -> QueryResult<T> {
+        let request = QueryRequest(
+            statement: .select(selectQuery),
+            options: options,
+            partitionValues: partitionValues
+        )
+        let payload = try JSONEncoder().encode(request)
+        let envelope = ServiceEnvelope(operationID: "query", payload: payload)
+        let responseEnvelope = try await transport.send(envelope)
+
+        if responseEnvelope.isError == true {
             throw ServiceError(
-                code: response.errorCode ?? "UNKNOWN",
-                message: response.errorMessage ?? "Unknown error"
+                code: responseEnvelope.errorCode ?? "UNKNOWN",
+                message: responseEnvelope.errorMessage ?? "Unknown error"
             )
         }
 
-        let countResponse = try JSONDecoder().decode(CountResponse.self, from: response.payload)
-        return countResponse.count
+        let response = try JSONDecoder().decode(QueryResponse.self, from: responseEnvelope.payload)
+        let items: [T] = try response.rows.map { try FieldValueDecoder.decode($0.fields) }
+        return QueryResult(items: items, continuation: response.continuation?.token)
     }
 
-    /// Execute the query and return only the first result
+    public func executeAnnotated() async throws -> AnnotatedQueryResult<T> {
+        let request = QueryRequest(
+            statement: .select(selectQuery),
+            options: options,
+            partitionValues: partitionValues
+        )
+        let payload = try JSONEncoder().encode(request)
+        let envelope = ServiceEnvelope(operationID: "query", payload: payload)
+        let responseEnvelope = try await transport.send(envelope)
+
+        if responseEnvelope.isError == true {
+            throw ServiceError(
+                code: responseEnvelope.errorCode ?? "UNKNOWN",
+                message: responseEnvelope.errorMessage ?? "Unknown error"
+            )
+        }
+
+        let response = try JSONDecoder().decode(QueryResponse.self, from: responseEnvelope.payload)
+        let records: [AnnotatedRecord<T>] = try response.rows.map { row in
+            AnnotatedRecord(item: try FieldValueDecoder.decode(row.fields), annotations: row.annotations)
+        }
+        return AnnotatedQueryResult(
+            records: records,
+            continuation: response.continuation?.token,
+            metadata: response.metadata
+        )
+    }
+
+    public func count() async throws -> Int {
+        if selectQuery.accessPath != nil {
+            throw ServiceError(
+                code: "UNSUPPORTED_QUERY",
+                message: "count() is not supported for access-path queries. Use a feature-specific count API."
+            )
+        }
+
+        var countQuery = selectQuery.replacing(
+            projection: .items([
+                ProjectionItem(.aggregate(.count(nil, distinct: false)), alias: "count")
+            ])
+        )
+        countQuery = countQuery.replacing(groupBy: nil)
+        countQuery = countQuery.replacing(having: nil)
+        countQuery = countQuery.replacing(orderBy: nil)
+        countQuery = countQuery.replacing(limit: 1)
+        countQuery = countQuery.replacing(offset: nil)
+        countQuery = countQuery.replacing(distinct: false)
+        countQuery = countQuery.replacing(reduced: false)
+
+        let request = QueryRequest(
+            statement: .select(countQuery),
+            options: .default,
+            partitionValues: partitionValues
+        )
+        let payload = try JSONEncoder().encode(request)
+        let envelope = ServiceEnvelope(operationID: "query", payload: payload)
+        let responseEnvelope = try await transport.send(envelope)
+
+        if responseEnvelope.isError == true {
+            throw ServiceError(
+                code: responseEnvelope.errorCode ?? "UNKNOWN",
+                message: responseEnvelope.errorMessage ?? "Unknown error"
+            )
+        }
+
+        let response = try JSONDecoder().decode(QueryResponse.self, from: responseEnvelope.payload)
+        guard let row = response.rows.first,
+              let count = row.fields["count"]?.int64Value else {
+            return 0
+        }
+        return Int(count)
+    }
+
     public func first() async throws -> T? {
         let result = try await limit(1).execute()
         return result.items.first
+    }
+
+    public func cursor(pageSize: Int = 100) -> ClientQueryCursor<T> {
+        var copy = self
+        copy = copy.pageSize(pageSize)
+        return ClientQueryCursor(builder: copy)
+    }
+
+    public func stream(pageSize: Int = 100) -> AsyncThrowingStream<T, Error> {
+        cursor(pageSize: pageSize).stream()
     }
 }

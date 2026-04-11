@@ -4,17 +4,17 @@ import PackageDescription
 let package = Package(
     name: "database-client",
     platforms: [
-        .iOS(.v18),
-        .macOS(.v15),
-        .tvOS(.v18),
-        .watchOS(.v11),
-        .visionOS(.v2)
+        .iOS(.v26),
+        .macOS(.v26),
+        .tvOS(.v26),
+        .watchOS(.v26),
+        .visionOS(.v26)
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0411.0"),
+        .package(path: "../database-kit"),
     ],
     targets: [
         .target(
@@ -23,6 +23,8 @@ let package = Package(
                 .product(name: "Core", package: "database-kit"),
                 .product(name: "QueryIR", package: "database-kit"),
                 .product(name: "DatabaseClientProtocol", package: "database-kit"),
+                .product(name: "Vector", package: "database-kit"),
+                .product(name: "FullText", package: "database-kit"),
             ]
         ),
         .testTarget(
