@@ -154,6 +154,62 @@ struct DatabaseClientE2ETests {
         #expect(afterDeleteCount == 2)
     }
 
+    @Test("cursor and stream drain multi-page query results without duplicates")
+    func cursorAndStreamDrainMultiPageQueryResultsWithoutDuplicates() async throws {
+        let server = DatabaseClientE2EServer()
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                try await server.handle(envelope)
+            }
+        )
+
+        for index in 1...5 {
+            try context.insert(DatabaseClientE2EUser(
+                id: "cursor-user-\(index)",
+                tenantID: "cursor-tenant",
+                name: "Cursor User \(index)",
+                age: 20 + index,
+                active: true
+            ))
+        }
+        try await context.save()
+
+        let cursor = context.find(DatabaseClientE2EUser.self)
+            .partition(["tenantID": "cursor-tenant"])
+            .sort(by: \DatabaseClientE2EUser.age)
+            .cursor(pageSize: 2)
+
+        let firstPage = try await cursor.next()
+        let secondPage = try await cursor.next()
+        let thirdPage = try await cursor.next()
+        let exhaustedPage = try await cursor.next()
+
+        #expect(firstPage.items.map(\.id) == ["cursor-user-1", "cursor-user-2"])
+        #expect(firstPage.hasMore == true)
+        #expect(secondPage.items.map(\.id) == ["cursor-user-3", "cursor-user-4"])
+        #expect(secondPage.hasMore == true)
+        #expect(thirdPage.items.map(\.id) == ["cursor-user-5"])
+        #expect(thirdPage.hasMore == false)
+        #expect(exhaustedPage.items.isEmpty)
+
+        var streamedIDs: [String] = []
+        for try await user in context.find(DatabaseClientE2EUser.self)
+            .partition(["tenantID": "cursor-tenant"])
+            .sort(by: \DatabaseClientE2EUser.age)
+            .stream(pageSize: 2) {
+            streamedIDs.append(user.id)
+        }
+
+        #expect(streamedIDs == [
+            "cursor-user-1",
+            "cursor-user-2",
+            "cursor-user-3",
+            "cursor-user-4",
+            "cursor-user-5",
+        ])
+        #expect(Set(streamedIDs).count == streamedIDs.count)
+    }
+
     @Test("save failure restores pending changes for retry")
     func saveFailureRestoresPendingChangesForRetry() async throws {
         let server = DatabaseClientE2EServer(saveFailures: 1)
@@ -188,6 +244,97 @@ struct DatabaseClientE2ETests {
             .where(\TestUser.id == "database-client-retry-alice")
             .execute()
         #expect(afterRetry.items.map(\.name) == ["Retry Alice"])
+    }
+
+    @Test("mixed change set failure restores updates deletes inserts and retries as one workflow")
+    func mixedChangeSetFailureRestoresUpdatesDeletesInsertsAndRetriesAsOneWorkflow() async throws {
+        let server = DatabaseClientE2EServer(saveFailures: 1)
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                try await server.handle(envelope)
+            }
+        )
+
+        try context.insert(DatabaseClientE2EUser(
+            id: "mixed-update",
+            tenantID: "tenant-mixed",
+            name: "Before Update",
+            age: 31,
+            active: true
+        ))
+        try context.insert(DatabaseClientE2EUser(
+            id: "mixed-delete",
+            tenantID: "tenant-mixed",
+            name: "Before Delete",
+            age: 32,
+            active: true
+        ))
+        do {
+            try await context.save()
+            Issue.record("Expected initial save to fail")
+        } catch let error as ServiceError {
+            #expect(error.code == "SAVE_REJECTED")
+        }
+        try await context.save()
+
+        try context.update(DatabaseClientE2EUser(
+            id: "mixed-update",
+            tenantID: "tenant-mixed",
+            name: "After Update",
+            age: 41,
+            active: true
+        ))
+        context.delete(DatabaseClientE2EUser(
+            id: "mixed-delete",
+            tenantID: "tenant-mixed",
+            name: "Before Delete",
+            age: 32,
+            active: true
+        ))
+        try context.insert(DatabaseClientE2EUser(
+            id: "mixed-insert",
+            tenantID: "tenant-mixed",
+            name: "Inserted",
+            age: 35,
+            active: true
+        ))
+        try await context.save()
+
+        let page = try await context.find(DatabaseClientE2EUser.self)
+            .partition(["tenantID": "tenant-mixed"])
+            .where(\DatabaseClientE2EUser.active == true)
+            .sort(by: \DatabaseClientE2EUser.age)
+            .pageSize(1)
+            .executeAnnotated()
+
+        #expect(page.items.map(\.id) == ["mixed-insert"])
+        #expect(page.continuation == "1")
+        #expect(page.metadata["matchedRows"] == .int64(2))
+        #expect(page.records.first?.annotations["tenantID"] == .string("tenant-mixed"))
+
+        let secondPage = try await context.find(DatabaseClientE2EUser.self)
+            .partition(["tenantID": "tenant-mixed"])
+            .where(\DatabaseClientE2EUser.active == true)
+            .sort(by: \DatabaseClientE2EUser.age)
+            .pageSize(1)
+            .continuation(try #require(page.continuation))
+            .execute()
+
+        #expect(secondPage.items.map(\.id) == ["mixed-update"])
+        #expect(secondPage.items.first?.name == "After Update")
+        #expect(secondPage.hasMore == false)
+
+        let deleted = try await context.get(
+            DatabaseClientE2EUser.self,
+            id: "mixed-delete",
+            partitionValues: ["tenantID": "tenant-mixed"]
+        )
+        #expect(deleted == nil)
+
+        let count = try await context.find(DatabaseClientE2EUser.self)
+            .partition(["tenantID": "tenant-mixed"])
+            .count()
+        #expect(count == 2)
     }
 
     @Test("query decode failures surface typed errors instead of being swallowed")
@@ -251,6 +398,68 @@ struct DatabaseClientE2ETests {
         }
     }
 
+    @Test("schema decode failures surface decoding errors")
+    func schemaDecodeFailuresSurfaceDecodingErrors() async throws {
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                #expect(envelope.operationID == "schema")
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: envelope.operationID,
+                    payload: Data("{\"entities\":\"not-an-array\"}".utf8)
+                )
+            }
+        )
+
+        do {
+            _ = try await context.fetchSchemaResponse()
+            Issue.record("Expected schema decode failure")
+        } catch let error as DecodingError {
+            switch error {
+            case .typeMismatch, .dataCorrupted, .keyNotFound, .valueNotFound:
+                break
+            @unknown default:
+                Issue.record("Unexpected decoding error: \(error)")
+            }
+        }
+    }
+
+    @Test("unconnected WebSocket transport surfaces not connected error")
+    func unconnectedWebSocketTransportSurfacesNotConnectedError() async throws {
+        let context = DatabaseContext(
+            transport: WebSocketTransport(url: URL(string: "ws://localhost:1/database-client-e2e")!)
+        )
+
+        do {
+            _ = try await context.find(TestUser.self).execute()
+            Issue.record("Expected unconnected WebSocket transport to fail")
+        } catch let error as ServiceError {
+            #expect(error.code == "NOT_CONNECTED")
+            #expect(error.message == "WebSocket is not connected")
+        }
+    }
+
+    @Test("disconnect resumes pending transport requests with disconnected error")
+    func disconnectResumesPendingTransportRequestsWithDisconnectedError() async throws {
+        let transport = DatabaseClientE2EPendingTransport()
+        let context = DatabaseContext(transport: transport)
+
+        let queryTask = Task {
+            try await context.find(TestUser.self).execute()
+        }
+
+        await transport.waitForPendingSend()
+        await context.disconnect()
+
+        do {
+            _ = try await queryTask.value
+            Issue.record("Expected pending request to fail when disconnected")
+        } catch let error as ServiceError {
+            #expect(error.code == "DISCONNECTED")
+            #expect(error.message == "Connection closed")
+        }
+    }
+
     @Test("context fetches polymorphic schema and decodes mixed polymorphic query results")
     func contextFetchesPolymorphicSchemaAndDecodesMixedPolymorphicQueryResults() async throws {
         let server = DatabaseClientE2EServer()
@@ -296,6 +505,137 @@ struct DatabaseClientE2ETests {
             Issue.record("Expected polymorphic decode to require local schema")
         } catch let error as ServiceError {
             #expect(error.code == "SCHEMA_REQUIRED")
+        }
+    }
+
+    @Test("polymorphic query missing type annotation surfaces invalid response")
+    func polymorphicQueryMissingTypeAnnotationSurfacesInvalidResponse() async throws {
+        let schema = databaseClientE2ESchema()
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                #expect(envelope.operationID == "query")
+                let response = QueryResponse(rows: [
+                    QueryRow(fields: [
+                        "id": .string("database-client-missing-type"),
+                        "title": .string("Untyped Article"),
+                        "body": .string("Body"),
+                    ])
+                ])
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: envelope.operationID,
+                    payload: try JSONEncoder().encode(response)
+                )
+            },
+            localSchema: schema
+        )
+
+        do {
+            _ = try await context.findPolymorphic(TestArticle.polymorphableType).executePage()
+            Issue.record("Expected missing _typeName annotation to fail")
+        } catch let error as ServiceError {
+            #expect(error.code == "INVALID_RESPONSE")
+        }
+    }
+
+    @Test("polymorphic query for unknown local group preserves typed error")
+    func polymorphicQueryForUnknownLocalGroupPreservesTypedError() async throws {
+        let schema = databaseClientE2ESchema()
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                #expect(envelope.operationID == "query")
+                let response = QueryResponse(rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("database-client-unknown-group"),
+                            "title": .string("Unknown Group Article"),
+                            "body": .string("Body"),
+                        ],
+                        annotations: ["_typeName": .string(TestArticle.persistableType)]
+                    )
+                ])
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: envelope.operationID,
+                    payload: try JSONEncoder().encode(response)
+                )
+            },
+            localSchema: schema
+        )
+
+        do {
+            _ = try await context.findPolymorphic("MissingDocumentGroup").executePage()
+            Issue.record("Expected unknown local polymorphic group to fail")
+        } catch let error as ServiceError {
+            #expect(error.code == "UNKNOWN_POLYMORPHIC_GROUP")
+        }
+    }
+
+    @Test("polymorphic query for unknown concrete type preserves typed error")
+    func polymorphicQueryForUnknownConcreteTypePreservesTypedError() async throws {
+        let schema = databaseClientE2ESchema()
+        let context = DatabaseContext(
+            transport: InProcessTransport { envelope in
+                #expect(envelope.operationID == "query")
+                let response = QueryResponse(rows: [
+                    QueryRow(
+                        fields: [
+                            "id": .string("database-client-unknown-type"),
+                            "title": .string("Unknown Type Article"),
+                            "body": .string("Body"),
+                        ],
+                        annotations: ["_typeName": .string("DatabaseClientUnknownDocument")]
+                    )
+                ])
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: envelope.operationID,
+                    payload: try JSONEncoder().encode(response)
+                )
+            },
+            localSchema: schema
+        )
+
+        do {
+            _ = try await context.findPolymorphic(TestArticle.polymorphableType).executePage()
+            Issue.record("Expected unknown concrete polymorphic type to fail")
+        } catch let error as ServiceError {
+            #expect(error.code == "UNKNOWN_PERSISTABLE_TYPE")
+        }
+    }
+}
+
+private actor DatabaseClientE2EPendingTransport: DatabaseTransport {
+    private var pendingContinuation: CheckedContinuation<ServiceEnvelope, any Error>?
+    private var pendingWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func send(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingContinuation = continuation
+            let waiters = pendingWaiters
+            pendingWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+    }
+
+    func disconnect() async {
+        guard let pendingContinuation else {
+            return
+        }
+        self.pendingContinuation = nil
+        pendingContinuation.resume(
+            throwing: ServiceError(code: "DISCONNECTED", message: "Connection closed")
+        )
+    }
+
+    func waitForPendingSend() async {
+        if pendingContinuation != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pendingWaiters.append(continuation)
         }
     }
 }
