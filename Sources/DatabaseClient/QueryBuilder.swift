@@ -5,6 +5,8 @@ import DatabaseClientProtocol
 
 /// Fluent query builder for remote database queries.
 public struct QueryBuilder<T: Persistable>: Sendable {
+    private static var keysetContinuationSeed: String { "keyset:v1" }
+
     private let transport: any DatabaseTransport
     private let entityName: String
     private var selectQuery: SelectQuery
@@ -68,6 +70,15 @@ public struct QueryBuilder<T: Persistable>: Sendable {
             continuation: QueryContinuation(token)
         )
         return copy
+    }
+
+    /// Requests keyset-based pagination from servers that support it.
+    ///
+    /// The continuation token remains opaque to the client. Servers that
+    /// understand this seed token can return stable sort-key continuations
+    /// instead of offset tokens.
+    public func keysetPagination() -> QueryBuilder<T> {
+        continuation(Self.keysetContinuationSeed)
     }
 
     public func pageSize(_ count: Int) -> QueryBuilder<T> {

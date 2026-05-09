@@ -501,6 +501,30 @@ struct QueryBuilderTests {
         #expect(request.options.continuation?.token == "abc123")
     }
 
+    @Test("keysetPagination sends keyset seed token")
+    func keysetPaginationSendsSeedToken() async throws {
+        let captured = Capture<Data>()
+
+        let transport = InProcessTransport { envelope in
+            captured.set(envelope.payload)
+            let response = QueryResponse(rows: [])
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        _ = try await context.find(TestUser.self)
+            .sort(by: \TestUser.age, ascending: false)
+            .keysetPagination()
+            .execute()
+
+        let request = try JSONDecoder().decode(QueryRequest.self, from: captured.get()!)
+        #expect(request.options.continuation?.token == "keyset:v1")
+    }
+
     @Test("consistency sets read consistency option")
     func consistencySetsOption() async throws {
         let captured = Capture<Data>()
@@ -567,6 +591,170 @@ struct QueryBuilderTests {
         let context = DatabaseContext(transport: transport)
         let user = try await context.find(TestUser.self).first()
         #expect(user?.name == "Alice")
+    }
+
+    @Test("cursor serializes concurrent next calls")
+    func cursorSerializesConcurrentNextCalls() async throws {
+        let requestTokens = Mutex<[String?]>([])
+
+        let transport = InProcessTransport { envelope in
+            let request = try JSONDecoder().decode(QueryRequest.self, from: envelope.payload)
+            let token = request.options.continuation?.token
+            requestTokens.withLock { $0.append(token) }
+            try await Task.sleep(nanoseconds: 20_000_000)
+
+            let response: QueryResponse
+            if token == nil {
+                response = QueryResponse(
+                    rows: [
+                        QueryRow(fields: ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)])
+                    ],
+                    continuation: QueryContinuation("page-2")
+                )
+            } else if token == "page-2" {
+                response = QueryResponse(
+                    rows: [
+                        QueryRow(fields: ["id": .string("u2"), "name": .string("Bob"), "age": .int64(25), "active": .bool(true)])
+                    ]
+                )
+            } else {
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: "query",
+                    errorCode: "INVALID_CONTINUATION",
+                    errorMessage: "Unexpected continuation token"
+                )
+            }
+
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let cursor = context.find(TestUser.self).cursor(pageSize: 1)
+
+        async let firstPage = cursor.next()
+        async let secondPage = cursor.next()
+        let (pageA, pageB) = try await (firstPage, secondPage)
+        let pages = [pageA, pageB]
+
+        #expect(pages.flatMap(\.items).map(\.id) == ["u1", "u2"])
+        #expect(requestTokens.withLock { $0.map { $0 ?? "<nil>" } } == ["<nil>", "page-2"])
+    }
+
+    @Test("cancelled waiting cursor next does not consume a page")
+    func cancelledWaitingCursorNextDoesNotConsumePage() async throws {
+        let requestTokens = Mutex<[String?]>([])
+
+        let transport = InProcessTransport { envelope in
+            let request = try JSONDecoder().decode(QueryRequest.self, from: envelope.payload)
+            let token = request.options.continuation?.token
+            requestTokens.withLock { $0.append(token) }
+            try await Task.sleep(nanoseconds: 50_000_000)
+
+            let response: QueryResponse
+            if token == nil {
+                response = QueryResponse(
+                    rows: [
+                        QueryRow(fields: ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)])
+                    ],
+                    continuation: QueryContinuation("page-2")
+                )
+            } else if token == "page-2" {
+                response = QueryResponse(
+                    rows: [
+                        QueryRow(fields: ["id": .string("u2"), "name": .string("Bob"), "age": .int64(25), "active": .bool(true)])
+                    ]
+                )
+            } else {
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: "query",
+                    errorCode: "INVALID_CONTINUATION",
+                    errorMessage: "Unexpected continuation token"
+                )
+            }
+
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let cursor = context.find(TestUser.self).cursor(pageSize: 1)
+
+        let firstTask = Task { try await cursor.next() }
+        while requestTokens.withLock({ $0.isEmpty }) {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+
+        let cancelledTask = Task { try await cursor.next() }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        cancelledTask.cancel()
+
+        do {
+            _ = try await cancelledTask.value
+            Issue.record("Expected waiting cursor task to be cancelled")
+        } catch is CancellationError {
+        }
+
+        let firstPage = try await firstTask.value
+        let secondPage = try await cursor.next()
+
+        #expect(firstPage.items.map(\.id) == ["u1"])
+        #expect(secondPage.items.map(\.id) == ["u2"])
+        #expect(requestTokens.withLock { $0.map { $0 ?? "<nil>" } } == ["<nil>", "page-2"])
+    }
+
+    @Test("stream stops fetching when consumer terminates")
+    func streamStopsFetchingWhenConsumerTerminates() async throws {
+        let requestTokens = Mutex<[String?]>([])
+
+        let transport = InProcessTransport { envelope in
+            let request = try JSONDecoder().decode(QueryRequest.self, from: envelope.payload)
+            let token = request.options.continuation?.token
+            requestTokens.withLock { $0.append(token) }
+
+            if token == nil {
+                let response = QueryResponse(
+                    rows: [
+                        QueryRow(fields: ["id": .string("u1"), "name": .string("Alice"), "age": .int64(30), "active": .bool(true)])
+                    ],
+                    continuation: QueryContinuation("page-2")
+                )
+                return ServiceEnvelope(
+                    responseTo: envelope.requestID,
+                    operationID: "query",
+                    payload: try JSONEncoder().encode(response)
+                )
+            }
+
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: "query",
+                errorCode: "UNEXPECTED_PAGE_FETCH",
+                errorMessage: "Stream fetched after consumer termination"
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let cursor = context.find(TestUser.self).cursor(pageSize: 1)
+        var receivedIDs: [String] = []
+
+        for try await user in cursor.stream() {
+            receivedIDs.append(user.id)
+            break
+        }
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        #expect(receivedIDs == ["u1"])
+        #expect(requestTokens.withLock { $0.map { $0 ?? "<nil>" } } == ["<nil>"])
     }
 
     @Test("count sends aggregate query")
@@ -781,6 +969,35 @@ struct DatabaseContextTests {
         #expect(counter.get() == 2)
     }
 
+    @Test("save restores changes when transport throws")
+    func saveRestoresChangesWhenTransportThrows() async throws {
+        let counter = Counter()
+
+        let transport = InProcessTransport { envelope in
+            let count = counter.increment()
+            if count == 1 {
+                throw ServiceError(code: "TIMEOUT", message: "Request timed out")
+            }
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: envelope.operationID
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        try context.insert(TestUser(id: "transport-timeout-user", name: "Timeout", age: 1))
+
+        do {
+            try await context.save()
+            Issue.record("Expected transport error")
+        } catch let error as ServiceError {
+            #expect(error.code == "TIMEOUT")
+        }
+
+        try await context.save()
+        #expect(counter.get() == 2)
+    }
+
     @Test("get decodes record by ID")
     func getDecodesRecord() async throws {
         let transport = InProcessTransport { envelope in
@@ -904,6 +1121,117 @@ struct DatabaseContextTests {
     }
 }
 
+// MARK: - Extension Operation Tests
+
+@Suite("Extension Operations")
+struct ExtensionOperationTests {
+
+    private struct ExtensionOperationRequest: Codable, Sendable, Equatable {
+        var id: String
+    }
+
+    private struct ExtensionOperationResponse: Codable, Sendable, Equatable {
+        var status: String
+    }
+
+    private struct TestCommandRequest: Codable, Sendable, Equatable {
+        var id: String
+    }
+
+    private struct TestCommandResponse: Codable, Sendable, Equatable {
+        var status: String
+    }
+
+    @Test("executeOperation sends typed payload and preserves metadata")
+    func executeOperationSendsTypedPayloadAndMetadata() async throws {
+        let capturedEnvelope = Capture<ServiceEnvelope>()
+
+        let transport = InProcessTransport { envelope in
+            capturedEnvelope.set(envelope)
+            let response = ExtensionOperationResponse(status: "accepted")
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: envelope.operationID,
+                payload: try JSONEncoder().encode(response)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let response: ExtensionOperationResponse = try await context.executeOperation(
+            "crm.command",
+            request: ExtensionOperationRequest(id: "cmd-1"),
+            metadata: ["tenantID": "stamp", "idempotencyKey": "idem-1"]
+        )
+
+        let envelope = try #require(capturedEnvelope.get())
+        let decodedRequest = try JSONDecoder().decode(ExtensionOperationRequest.self, from: envelope.payload)
+        #expect(envelope.operationID == "crm.command")
+        #expect(envelope.metadata["tenantID"] == "stamp")
+        #expect(envelope.metadata["idempotencyKey"] == "idem-1")
+        #expect(decodedRequest == ExtensionOperationRequest(id: "cmd-1"))
+        #expect(response == ExtensionOperationResponse(status: "accepted"))
+    }
+
+    @Test("executeCommand wraps command protocol and decodes command result")
+    func executeCommandWrapsCommandProtocolAndDecodesCommandResult() async throws {
+        let capturedEnvelope = Capture<ServiceEnvelope>()
+
+        let transport = InProcessTransport { envelope in
+            capturedEnvelope.set(envelope)
+            let command = try JSONDecoder().decode(DatabaseClientProtocol.CommandRequest.self, from: envelope.payload)
+            let decodedPayload = try JSONDecoder().decode(TestCommandRequest.self, from: command.payload)
+            let responsePayload = try JSONEncoder().encode(TestCommandResponse(status: "accepted-\(decodedPayload.id)"))
+            let commandResponse = DatabaseClientProtocol.CommandResponse(
+                status: "applied",
+                payload: responsePayload,
+                effects: [
+                    CommandEffect(
+                        kind: "update",
+                        key: RecordKey(entityName: "Ticket", id: .string(decodedPayload.id))
+                    )
+                ],
+                replayed: true
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: envelope.operationID,
+                payload: try JSONEncoder().encode(commandResponse)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let result: ClientCommandResult<TestCommandResponse> = try await context.executeCommandResult(
+            "ticket.resolve",
+            request: TestCommandRequest(id: "ticket-1"),
+            idempotencyKey: "resolve-1",
+            preconditions: [
+                WritePreconditionEntry(
+                    key: RecordKey(entityName: "Ticket", id: .string("ticket-1")),
+                    precondition: .exists
+                )
+            ],
+            metadata: ["tenantID": "stamp"],
+            envelopeMetadata: ["traceID": "trace-1"]
+        )
+
+        let envelope = try #require(capturedEnvelope.get())
+        let command = try JSONDecoder().decode(DatabaseClientProtocol.CommandRequest.self, from: envelope.payload)
+        let decodedRequest = try JSONDecoder().decode(TestCommandRequest.self, from: command.payload)
+
+        #expect(envelope.operationID == "command")
+        #expect(envelope.metadata["traceID"] == "trace-1")
+        #expect(command.commandID == "ticket.resolve")
+        #expect(command.idempotencyKey?.value == "resolve-1")
+        #expect(command.metadata["tenantID"] == "stamp")
+        #expect(command.preconditions.first?.precondition.kind == .exists)
+        #expect(decodedRequest == TestCommandRequest(id: "ticket-1"))
+        #expect(result.status == "applied")
+        #expect(result.response == TestCommandResponse(status: "accepted-ticket-1"))
+        #expect(result.effects.first?.kind == "update")
+        #expect(result.replayed == true)
+    }
+}
+
 // MARK: - FieldValueDecoder Tests
 
 @Suite("FieldValueDecoder")
@@ -924,6 +1252,15 @@ struct FieldValueDecoderTests {
         #expect(decoded.name == "Alice")
         #expect(decoded.age == 30)
         #expect(decoded.active == true)
+    }
+
+    @Test("integer one is not encoded as bool")
+    func integerOneIsNotEncodedAsBool() throws {
+        let original = TestUser(id: "u1", name: "Alice", age: 1, active: true)
+        let dict = try FieldValueDecoder.encode(original)
+
+        #expect(dict["age"] == .int64(1))
+        #expect(dict["active"] == .bool(true))
     }
 
     @Test("idString extracts string ID")

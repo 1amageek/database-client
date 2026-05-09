@@ -58,24 +58,25 @@ enum FieldValueDecoder {
     /// Convert a raw JSON value to FieldValue
     private static func jsonToFieldValue(_ value: Any) -> FieldValue? {
         // JSONSerialization returns NSNumber for booleans and numbers.
-        // Check Bool first (NSNumber bridging: Bool check via CFBoolean)
-        if let bool = value as? Bool {
-            return .bool(bool)
-        }
-        if let int = value as? Int64 {
-            return .int64(int)
-        }
-        if let int = value as? Int {
-            return .int64(Int64(int))
-        }
-        if let double = value as? Double {
-            // If the double is representable as Int64 without loss, prefer int64
-            if !double.isNaN && !double.isInfinite
-                && double >= Double(Int64.min) && double <= Double(Int64.max)
-                && double == Double(Int64(double)) {
-                return .int64(Int64(double))
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .bool(number.boolValue)
             }
-            return .double(double)
+            let type = String(cString: number.objCType)
+            switch type {
+            case "c", "s", "i", "l", "q", "C", "S", "I", "L", "Q":
+                return .int64(number.int64Value)
+            case "f", "d":
+                let double = number.doubleValue
+                if !double.isNaN && !double.isInfinite
+                    && double >= Double(Int64.min) && double <= Double(Int64.max)
+                    && double == Double(Int64(double)) {
+                    return .int64(Int64(double))
+                }
+                return .double(double)
+            default:
+                return .double(number.doubleValue)
+            }
         }
         if let string = value as? String {
             return .string(string)

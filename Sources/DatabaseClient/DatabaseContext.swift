@@ -37,7 +37,11 @@ public final class DatabaseContext: Sendable {
         self.pendingChanges = Mutex(ChangeSet())
         self.localSchema = localSchema
 
-        let ws = WebSocketTransport(url: configuration.url, authToken: configuration.authToken)
+        let ws = WebSocketTransport(
+            url: configuration.url,
+            authToken: configuration.authToken,
+            requestTimeout: configuration.timeout
+        )
         try await ws.connect()
         self.transport = ws
     }
@@ -101,7 +105,15 @@ public final class DatabaseContext: Sendable {
         let saveReq = SaveRequest(changes: changes)
         let payload = try JSONEncoder().encode(saveReq)
         let envelope = ServiceEnvelope(operationID: "save", payload: payload)
-        let response = try await transport.send(envelope)
+
+        let response: ServiceEnvelope
+        do {
+            response = try await transport.send(envelope)
+        } catch {
+            // Restore changes on failure
+            pendingChanges.withLock { $0.changes.append(contentsOf: changes) }
+            throw error
+        }
 
         if response.isError == true {
             // Restore changes on failure
@@ -192,6 +204,97 @@ public final class DatabaseContext: Sendable {
             records: records,
             continuation: response.continuation?.token,
             metadata: response.metadata
+        )
+    }
+
+    /// Execute an extension operation by string identifier.
+    ///
+    /// This keeps feature-specific commands out of the core client API while
+    /// still allowing domain SDKs to route typed commands through the same
+    /// transport, timeout, cancellation, and error handling path.
+    public func executeOperation<Request: Encodable, Response: Decodable>(
+        _ operationID: String,
+        request: Request,
+        responseType: Response.Type = Response.self,
+        metadata: [String: String] = [:]
+    ) async throws -> Response {
+        let payload = try JSONEncoder().encode(request)
+        let envelope = ServiceEnvelope(
+            operationID: operationID,
+            payload: payload,
+            metadata: metadata
+        )
+        let response = try await transport.send(envelope)
+
+        if response.isError == true {
+            throw ServiceError(
+                code: response.errorCode ?? "UNKNOWN",
+                message: response.errorMessage ?? "Unknown error"
+            )
+        }
+
+        return try JSONDecoder().decode(Response.self, from: response.payload)
+    }
+
+    /// Execute a registered server-side command and return its decoded payload.
+    public func executeCommand<Request: Encodable, Response: Decodable & Sendable>(
+        _ commandID: String,
+        request: Request,
+        responseType: Response.Type = Response.self,
+        idempotencyKey: IdempotencyKey? = nil,
+        preconditions: [WritePreconditionEntry] = [],
+        metadata: [String: String] = [:],
+        envelopeMetadata: [String: String] = [:]
+    ) async throws -> Response {
+        try await executeCommandResult(
+            commandID,
+            request: request,
+            responseType: responseType,
+            idempotencyKey: idempotencyKey,
+            preconditions: preconditions,
+            metadata: metadata,
+            envelopeMetadata: envelopeMetadata
+        ).response
+    }
+
+    /// Execute a registered server-side command and return status, effects, and replay metadata.
+    public func executeCommandResult<Request: Encodable, Response: Decodable & Sendable>(
+        _ commandID: String,
+        request: Request,
+        responseType: Response.Type = Response.self,
+        idempotencyKey: IdempotencyKey? = nil,
+        preconditions: [WritePreconditionEntry] = [],
+        metadata: [String: String] = [:],
+        envelopeMetadata: [String: String] = [:]
+    ) async throws -> ClientCommandResult<Response> {
+        let command = CommandRequest(
+            commandID: commandID,
+            idempotencyKey: idempotencyKey,
+            payload: try JSONEncoder().encode(request),
+            preconditions: preconditions,
+            metadata: metadata
+        )
+        let envelope = ServiceEnvelope(
+            operationID: "command",
+            payload: try JSONEncoder().encode(command),
+            metadata: envelopeMetadata
+        )
+        let response = try await transport.send(envelope)
+
+        if response.isError == true {
+            throw ServiceError(
+                code: response.errorCode ?? "UNKNOWN",
+                message: response.errorMessage ?? "Unknown error"
+            )
+        }
+
+        let commandResponse = try JSONDecoder().decode(CommandResponse.self, from: response.payload)
+        let decodedPayload = try JSONDecoder().decode(Response.self, from: commandResponse.payload)
+        return ClientCommandResult(
+            status: commandResponse.status,
+            response: decodedPayload,
+            effects: commandResponse.effects,
+            replayed: commandResponse.replayed
         )
     }
 
@@ -289,5 +392,25 @@ public final class DatabaseContext: Sendable {
             )
         }
         return polymorphicType.typeCode(for: type.persistableType)
+    }
+}
+
+/// Decoded command response returned by `executeCommandResult`.
+public struct ClientCommandResult<Response: Sendable>: Sendable {
+    public let status: String
+    public let response: Response
+    public let effects: [CommandEffect]
+    public let replayed: Bool
+
+    public init(
+        status: String,
+        response: Response,
+        effects: [CommandEffect],
+        replayed: Bool
+    ) {
+        self.status = status
+        self.response = response
+        self.effects = effects
+        self.replayed = replayed
     }
 }
