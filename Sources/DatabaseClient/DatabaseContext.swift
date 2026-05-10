@@ -94,6 +94,11 @@ public final class DatabaseContext: Sendable {
 
     /// Send all pending changes to the server atomically
     public func save() async throws {
+        try await save(options: .default)
+    }
+
+    /// Send all pending changes with retry and precondition metadata.
+    public func save(options: SaveOptions) async throws {
         let changes = pendingChanges.withLock { cs -> [ChangeSet.Change] in
             let current = cs.changes
             cs.changes.removeAll()
@@ -102,9 +107,16 @@ public final class DatabaseContext: Sendable {
 
         guard !changes.isEmpty else { return }
 
-        let saveReq = SaveRequest(changes: changes)
+        let saveReq = SaveRequest(
+            changes: changes,
+            preconditions: options.preconditions
+        )
         let payload = try JSONEncoder().encode(saveReq)
-        let envelope = ServiceEnvelope(operationID: "save", payload: payload)
+        let envelope = ServiceEnvelope(
+            operationID: "save",
+            payload: payload,
+            metadata: options.metadata
+        )
 
         let response: ServiceEnvelope
         do {
@@ -197,7 +209,8 @@ public final class DatabaseContext: Sendable {
         let records: [AnnotatedRecord<T>] = try response.rows.map { row in
             AnnotatedRecord<T>(
                 item: try FieldValueDecoder.decode(row.fields),
-                annotations: row.annotations
+                annotations: row.annotations,
+                version: row.version
             )
         }
         return AnnotatedQueryResult(
@@ -295,6 +308,28 @@ public final class DatabaseContext: Sendable {
             response: decodedPayload,
             effects: commandResponse.effects,
             replayed: commandResponse.replayed
+        )
+    }
+
+    /// Execute a typed command descriptor.
+    public func execute<Response: Decodable & Sendable, Payload: Encodable & Sendable>(
+        _ command: TypedCommand<Payload, Response>
+    ) async throws -> Response {
+        try await executeCommandResult(command).response
+    }
+
+    /// Execute a typed command descriptor and return command metadata.
+    public func executeCommandResult<Response: Decodable & Sendable, Payload: Encodable & Sendable>(
+        _ command: TypedCommand<Payload, Response>
+    ) async throws -> ClientCommandResult<Response> {
+        try await executeCommandResult(
+            command.commandID,
+            request: command.payload,
+            responseType: command.responseType,
+            idempotencyKey: command.idempotencyKey,
+            preconditions: command.preconditions,
+            metadata: command.metadata,
+            envelopeMetadata: command.envelopeMetadata
         )
     }
 

@@ -142,7 +142,11 @@ public struct QueryBuilder<T: Persistable>: Sendable {
 
         let response = try JSONDecoder().decode(QueryResponse.self, from: responseEnvelope.payload)
         let records: [AnnotatedRecord<T>] = try response.rows.map { row in
-            AnnotatedRecord(item: try FieldValueDecoder.decode(row.fields), annotations: row.annotations)
+            AnnotatedRecord(
+                item: try FieldValueDecoder.decode(row.fields),
+                annotations: row.annotations,
+                version: row.version
+            )
         }
         return AnnotatedQueryResult(
             records: records,

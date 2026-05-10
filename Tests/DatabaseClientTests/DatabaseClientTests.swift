@@ -895,6 +895,43 @@ struct DatabaseContextTests {
         #expect(changes[2].operation == .delete)
     }
 
+    @Test("save options sends write preconditions")
+    func saveOptionsSendsPreconditions() async throws {
+        let capturedEnvelope = Capture<ServiceEnvelope>()
+        let captured = Capture<SaveRequest>()
+
+        let transport = InProcessTransport { envelope in
+            if envelope.operationID == "save" {
+                capturedEnvelope.set(envelope)
+                captured.set(try JSONDecoder().decode(SaveRequest.self, from: envelope.payload))
+            }
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: envelope.operationID
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        try context.update(TestUser(id: "u1", name: "Alice", age: 31))
+        try await context.save(options: SaveOptions(
+            preconditions: [
+                WritePreconditionEntry(
+                    key: RecordKey(entityName: "TestUser", id: .string("u1")),
+                    precondition: .matchesStored(RecordVersionToken("token-1"))
+                )
+            ],
+            metadata: ["tenantID": "stamp"]
+        ))
+
+        let envelope = try #require(capturedEnvelope.get())
+        let request = try #require(captured.get())
+        #expect(envelope.metadata["tenantID"] == "stamp")
+        #expect(request.preconditions.count == 1)
+        #expect(request.preconditions[0].key.entityName == "TestUser")
+        #expect(request.preconditions[0].precondition.kind == .matchesStored)
+        #expect(request.preconditions[0].precondition.version?.value == "token-1")
+    }
+
     @Test("save with no changes does not send request")
     func saveNoChanges() async throws {
         let flag = Flag()
@@ -1229,6 +1266,46 @@ struct ExtensionOperationTests {
         #expect(result.response == TestCommandResponse(status: "accepted-ticket-1"))
         #expect(result.effects.first?.kind == "update")
         #expect(result.replayed == true)
+    }
+
+    @Test("typed command descriptor wraps command protocol")
+    func typedCommandDescriptorWrapsCommandProtocol() async throws {
+        let capturedEnvelope = Capture<ServiceEnvelope>()
+
+        let transport = InProcessTransport { envelope in
+            capturedEnvelope.set(envelope)
+            let command = try JSONDecoder().decode(DatabaseClientProtocol.CommandRequest.self, from: envelope.payload)
+            let decodedPayload = try JSONDecoder().decode(TestCommandRequest.self, from: command.payload)
+            let responsePayload = try JSONEncoder().encode(TestCommandResponse(status: decodedPayload.id))
+            let commandResponse = DatabaseClientProtocol.CommandResponse(
+                status: "applied",
+                payload: responsePayload
+            )
+            return ServiceEnvelope(
+                responseTo: envelope.requestID,
+                operationID: envelope.operationID,
+                payload: try JSONEncoder().encode(commandResponse)
+            )
+        }
+
+        let context = DatabaseContext(transport: transport)
+        let command = TypedCommand<TestCommandRequest, TestCommandResponse>(
+            "ticket.resolve",
+            payload: TestCommandRequest(id: "ticket-2"),
+            idempotencyKey: "resolve-2",
+            metadata: ["tenantID": "stamp"],
+            envelopeMetadata: ["traceID": "trace-2"]
+        )
+        let response: TestCommandResponse = try await context.execute(command)
+
+        let envelope = try #require(capturedEnvelope.get())
+        let request = try JSONDecoder().decode(DatabaseClientProtocol.CommandRequest.self, from: envelope.payload)
+        #expect(envelope.operationID == "command")
+        #expect(envelope.metadata["traceID"] == "trace-2")
+        #expect(request.commandID == "ticket.resolve")
+        #expect(request.idempotencyKey?.value == "resolve-2")
+        #expect(request.metadata["tenantID"] == "stamp")
+        #expect(response == TestCommandResponse(status: "ticket-2"))
     }
 }
 
