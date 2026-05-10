@@ -14,7 +14,7 @@ let package = Package(
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0509.1"),
+        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0510.0"),
     ],
     targets: [
         .target(
