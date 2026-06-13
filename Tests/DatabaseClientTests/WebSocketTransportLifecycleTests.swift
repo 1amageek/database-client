@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 import Core
 import DatabaseClientProtocol
@@ -84,8 +85,13 @@ struct WebSocketTransportLifecycleTests {
 
         try context.insert(TestUser(id: "save-timeout-user", name: "Timeout", age: 1))
 
-        do {
+        let saveTask = Task {
             try await context.save()
+        }
+        await service.waitForOperation("save")
+
+        do {
+            try await saveTask.value
             Issue.record("Expected save to time out")
         } catch let error as ServiceError {
             #expect(error.code == "TIMEOUT")
@@ -168,14 +174,19 @@ private actor DelayedWebSocketQueryService {
     }
 }
 
-private final class TestWebSocketServer: @unchecked Sendable {
+private struct TestWebSocketServerState: Sendable {
+    var listenFD: Int32 = -1
+    var clientFD: Int32 = -1
+    var port: UInt16 = 0
+}
+
+private final class TestWebSocketServer: Sendable {
     private let service: DelayedWebSocketQueryService
-    private var listenFD: Int32 = -1
-    private var clientFD: Int32 = -1
-    private(set) var port: UInt16 = 0
+    private let state = Mutex(TestWebSocketServerState())
 
     var url: URL {
-        URL(string: "ws://127.0.0.1:\(port)/database-client-lifecycle")!
+        let port = state.withLock { $0.port }
+        return URL(string: "ws://127.0.0.1:\(port)/database-client-lifecycle")!
     }
 
     init(service: DelayedWebSocketQueryService) throws {
@@ -218,35 +229,69 @@ private final class TestWebSocketServer: @unchecked Sendable {
             throw POSIXError(.EIO)
         }
 
-        port = UInt16(bigEndian: boundAddress.sin_port)
-        listenFD = fd
+        state.withLock {
+            $0.port = UInt16(bigEndian: boundAddress.sin_port)
+            $0.listenFD = fd
+        }
         Task.detached { [self] in
             await acceptLoop()
         }
     }
 
     func stop() {
-        if clientFD >= 0 {
-            close(clientFD)
-            clientFD = -1
+        let descriptors = state.withLock { state in
+            let current = (listenFD: state.listenFD, clientFD: state.clientFD)
+            state.listenFD = -1
+            state.clientFD = -1
+            return current
         }
-        if listenFD >= 0 {
-            close(listenFD)
-            listenFD = -1
+
+        if descriptors.clientFD >= 0 {
+            close(descriptors.clientFD)
+        }
+        if descriptors.listenFD >= 0 {
+            close(descriptors.listenFD)
         }
     }
 
     private func acceptLoop() async {
-        while listenFD >= 0 {
+        while true {
+            let listenFD = state.withLock { $0.listenFD }
+            guard listenFD >= 0 else {
+                return
+            }
+
             let fd = accept(listenFD, nil, nil)
             guard fd >= 0 else {
                 return
             }
-            clientFD = fd
+
+            let shouldClose = state.withLock { state in
+                guard state.listenFD >= 0 else {
+                    return true
+                }
+                state.clientFD = fd
+                return false
+            }
+            guard !shouldClose else {
+                close(fd)
+                return
+            }
+
             do {
                 var bufferedBytes = try performHandshake(fd: fd)
                 try await frameLoop(fd: fd, bufferedBytes: &bufferedBytes)
             } catch {
+            }
+
+            let shouldCloseAcceptedDescriptor = state.withLock {
+                if $0.clientFD == fd {
+                    $0.clientFD = -1
+                    return true
+                }
+                return false
+            }
+            if shouldCloseAcceptedDescriptor {
                 close(fd)
             }
         }
