@@ -12,6 +12,7 @@ let package = Package(
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
+        .library(name: "DatabaseClientWasm", targets: ["DatabaseClientWasm"]),
     ],
     dependencies: [
         .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0613.0"),
@@ -28,9 +29,19 @@ let package = Package(
                 .product(name: "Permuted", package: "database-kit"),
             ]
         ),
+        .target(
+            name: "DatabaseClientWasm",
+            dependencies: [
+                .product(name: "DatabaseKitWasmCore", package: "database-kit"),
+            ]
+        ),
         .testTarget(
             name: "DatabaseClientTests",
             dependencies: ["DatabaseClient"]
+        ),
+        .testTarget(
+            name: "DatabaseClientWasmTests",
+            dependencies: ["DatabaseClientWasm"]
         ),
     ],
     swiftLanguageModes: [.v6]
