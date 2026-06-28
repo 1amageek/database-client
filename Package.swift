@@ -1,31 +1,13 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-let wireClientEnabled = Context.environment["DATABASE_WIRE"] == "1"
-    || Context.environment["DATABASE_CLIENT_WIRE"] == "1"
-
-let hostSourceExcludes = [
-    "AnnotatedQueryResult.swift",
-    "ClientConfiguration.swift",
-    "ClientQueryCursor.swift",
-    "DatabaseContext.swift",
-    "FeatureQueryResults.swift",
-    "FullTextQueryBuilder.swift",
-    "Internal",
-    "PolymorphicQueryBuilder.swift",
-    "PredicateOperators.swift",
-    "QueryBuilder.swift",
-    "QueryResult.swift",
-    "SaveOptions.swift",
-    "TypedCommand.swift",
-    "VectorQueryBuilder.swift",
-]
-
-let hostTestExcludes = [
-    "CanonicalReadFeatureTests.swift",
-    "DatabaseClientE2ETests.swift",
-    "DatabaseClientTests.swift",
-    "WebSocketTransportLifecycleTests.swift",
+let hostPlatforms: [Platform] = [
+    .macOS,
+    .iOS,
+    .tvOS,
+    .watchOS,
+    .visionOS,
+    .linux,
 ]
 
 let package = Package(
@@ -39,36 +21,42 @@ let package = Package(
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
+        .library(name: "WebSocketClient", targets: ["WebSocketClient"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0613.0"),
+        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0628.0"),
     ],
     targets: [
         .target(
             name: "DatabaseClient",
-            dependencies: wireClientEnabled
-                ? [
-                    .product(name: "DatabaseKitWasmCore", package: "database-kit"),
-                ]
-                : [
-                    .product(name: "Core", package: "database-kit"),
-                    .product(name: "QueryIR", package: "database-kit"),
-                    .product(name: "DatabaseClientProtocol", package: "database-kit"),
-                    .product(name: "Vector", package: "database-kit"),
-                    .product(name: "FullText", package: "database-kit"),
-                    .product(name: "Permuted", package: "database-kit"),
-                ],
-            exclude: wireClientEnabled ? hostSourceExcludes : ["Wire"]
+            dependencies: [
+                .product(name: "DatabaseWire", package: "database-kit"),
+                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "QueryIR", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "Vector", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "FullText", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "Permuted", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+            ]
+        ),
+        .target(
+            name: "WebSocketClient",
+            dependencies: [
+                "DatabaseClient",
+                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+            ]
         ),
         .testTarget(
             name: "DatabaseClientTests",
-            dependencies: wireClientEnabled
-                ? [
-                    "DatabaseClient",
-                    .product(name: "DatabaseKitWasmCore", package: "database-kit"),
-                ]
-                : ["DatabaseClient"],
-            exclude: wireClientEnabled ? hostTestExcludes : ["Wire"]
+            dependencies: [
+                "DatabaseClient",
+                .target(name: "WebSocketClient", condition: .when(platforms: hostPlatforms)),
+                .product(name: "DatabaseWire", package: "database-kit"),
+                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "QueryIR", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]

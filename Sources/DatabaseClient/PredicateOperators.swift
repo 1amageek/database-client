@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Core
 import QueryIR
 
@@ -79,3 +80,5 @@ public func >= <T: Persistable, V: FieldValueConvertible & Comparable>(
 // MARK: - Logical operators
 // &&, ||, ! are defined in QueryIR.Expression as static operators.
 // Re-exported here via `import QueryIR`.
+
+#endif

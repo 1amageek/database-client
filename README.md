@@ -1,10 +1,10 @@
 # database-client
 
-Type-safe Swift client SDK for [database-framework](https://github.com/1amageek/database-framework). KeyPath-based queries, change tracking, and WebSocket transport.
+Type-safe Swift client SDK for [database-framework](https://github.com/1amageek/database-framework). KeyPath-based queries, change tracking, transport injection, and optional URLSession-backed WebSocket connectivity.
 
 ## Overview
 
-database-client provides a native Swift API for iOS and macOS apps to interact with a database-framework server. Models defined in [database-kit](https://github.com/1amageek/database-kit) are shared between client and server — the same `@Persistable` structs work on both sides.
+database-client provides a native Swift API for Apple platform apps to interact with a database-framework server. Models defined in [database-kit](https://github.com/1amageek/database-kit) are shared between client and server — the same `@Persistable` structs work on both sides.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -17,7 +17,7 @@ database-client provides a native Swift API for iOS and macOS apps to interact w
 │  database-framework │       │    database-client       │
 │  FDBContainer       │◄─────│    DatabaseContext        │
 │  Index Maintainers  │  WS  │    KeyPath queries       │
-│  FoundationDB       │       │    iOS / macOS           │
+│  FoundationDB       │       │    Apple / WASI wire      │
 └─────────────────────┘       └─────────────────────────┘
 ```
 
@@ -25,7 +25,7 @@ database-client provides a native Swift API for iOS and macOS apps to interact w
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0411.1"),
+    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0628.0"),
 ]
 ```
 
@@ -34,6 +34,7 @@ dependencies: [
     name: "YourApp",
     dependencies: [
         .product(name: "DatabaseClient", package: "database-client"),
+        .product(name: "WebSocketClient", package: "database-client"),
     ]
 )
 ```
@@ -44,12 +45,65 @@ dependencies: [
 
 ```swift
 import DatabaseClient
+import WebSocketClient
 
-let config = ClientConfiguration(
+let context = try await DatabaseContext(
+    webSocket: WebSocketConfiguration(
+        url: URL(string: "ws://localhost:8080/db")!,
+        authToken: "your-token"
+    )
+)
+```
+
+`DatabaseContext` depends on the `Transport` protocol. Use `WebSocketClient` when you want the built-in URLSession-backed transport, or inject your own transport for another runtime.
+
+```swift
+import DatabaseClient
+
+let transport = MyTransport()
+let context = DatabaseContext(
+    transport: transport,
+    localSchema: nil
+)
+```
+
+### WebAssembly Wire Client
+
+The same `DatabaseClient` product can be built for WASI. In that environment, the high-level `DatabaseContext` API is not available because it depends on host platform APIs from database-kit. Use the small wire facade instead:
+
+```swift
+import DatabaseClient
+
+let client = WireClient(transport: MyWireTransport())
+let record = try client.getRecord(
+    typeName: "User",
+    id: "user-001"
+)
+```
+
+`WireTransport` is intentionally binary and minimal:
+
+```swift
+struct MyWireTransport: WireTransport {
+    func send(_ request: [UInt8]) throws(ClientError) -> [UInt8] {
+        fatalError("Bridge to the host runtime.")
+    }
+}
+```
+
+### URLSession Transport
+
+```swift
+import DatabaseClient
+import WebSocketClient
+
+let transport = URLSessionWebSocketTransport(
     url: URL(string: "ws://localhost:8080/db")!,
     authToken: "your-token"
 )
-let context = try await DatabaseContext(configuration: config)
+try await transport.connect()
+
+let context = DatabaseContext(transport: transport)
 ```
 
 ### CRUD
@@ -134,13 +188,19 @@ let count = try await context.find(User.self)
 └──────────────┬───────────────────────────────┘
                │ QueryIR.Expression (Codable)
 ┌─ Transport ──▼───────────────────────────────┐
-│ DatabaseTransport (protocol)                 │
-│   ├─ WebSocketTransport (production)         │
-│   └─ InProcessTransport (testing)            │
+│ Transport (protocol)                         │
+│   ├─ URLSessionWebSocketTransport            │
+│   │   from WebSocketClient                   │
+│   └─ InProcessTransport                      │
 └──────────────┬───────────────────────────────┘
                │ ServiceEnvelope (JSON)
                ▼
          database-framework server
+
+┌─ Wire Runtime ───────────────────────────────┐
+│ WireClient<Remote: WireTransport>            │
+│   DatabaseWire binary request / response     │
+└──────────────────────────────────────────────┘
 ```
 
 ### Shared Query Model
@@ -160,13 +220,15 @@ let context = DatabaseContext(transport: transport)
 
 ## Platform Support
 
-| Platform | Minimum Version |
-|----------|-----------------|
-| iOS | 18.0+ |
-| macOS | 15.0+ |
-| tvOS | 18.0+ |
-| watchOS | 11.0+ |
-| visionOS | 2.0+ |
+| Runtime | Support |
+|---------|---------|
+| iOS | 26.0+ |
+| macOS | 26.0+ |
+| tvOS | 26.0+ |
+| watchOS | 26.0+ |
+| visionOS | 26.0+ |
+| Linux | Supported by SwiftPM target conditions |
+| WASI | `DatabaseClient` wire API (`WireClient`, `WireTransport`, `ClientError`) |
 
 ## Related Packages
 

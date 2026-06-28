@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 
@@ -143,3 +144,5 @@ private actor ClientQueryCursorState<T: Persistable> {
         isAdvancing = false
     }
 }
+
+#endif

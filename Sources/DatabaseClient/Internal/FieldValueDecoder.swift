@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import DatabaseClientProtocol
@@ -103,3 +104,5 @@ enum FieldValueDecoder {
         }
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import QueryIR
@@ -160,3 +161,5 @@ public struct VectorQueryBuilder<T: Persistable>: Sendable {
         return "\(T.persistableType)_vector_\(fieldName)"
     }
 }
+
+#endif

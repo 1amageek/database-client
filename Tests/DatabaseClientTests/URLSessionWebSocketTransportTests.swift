@@ -1,13 +1,15 @@
+#if !os(WASI)
 import CryptoKit
 import Darwin
 import Foundation
 import Synchronization
 import Testing
 import Core
+import WebSocketClient
 import DatabaseClientProtocol
 @testable import DatabaseClient
 
-@Suite("WebSocketTransport lifecycle")
+@Suite("URLSessionWebSocketTransport lifecycle")
 struct WebSocketTransportLifecycleTests {
     @Test("in-flight cancellation returns before delayed server response")
     func inFlightCancellationReturnsBeforeDelayedServerResponse() async throws {
@@ -17,10 +19,9 @@ struct WebSocketTransportLifecycleTests {
         defer { server.stop() }
 
         let context = try await DatabaseContext(
-            configuration: ClientConfiguration(
+            webSocket: WebSocketConfiguration(
                 url: server.url,
-                retryPolicy: .none,
-                timeout: 5
+                requestTimeout: 5
             )
         )
 
@@ -48,10 +49,9 @@ struct WebSocketTransportLifecycleTests {
         defer { server.stop() }
 
         let context = try await DatabaseContext(
-            configuration: ClientConfiguration(
+            webSocket: WebSocketConfiguration(
                 url: server.url,
-                retryPolicy: .none,
-                timeout: 0.05
+                requestTimeout: 0.05
             )
         )
 
@@ -76,10 +76,9 @@ struct WebSocketTransportLifecycleTests {
         defer { server.stop() }
 
         let context = try await DatabaseContext(
-            configuration: ClientConfiguration(
+            webSocket: WebSocketConfiguration(
                 url: server.url,
-                retryPolicy: ClientConfiguration.RetryPolicy(maxRetries: 2, backoffBase: 0),
-                timeout: 0.05
+                requestTimeout: 0.05
             )
         )
 
@@ -430,3 +429,5 @@ private final class TestWebSocketServer: Sendable {
         return output
     }
 }
+
+#endif

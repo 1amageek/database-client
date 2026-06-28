@@ -1,3 +1,4 @@
+#if !os(WASI)
 import DatabaseClientProtocol
 import Foundation
 
@@ -28,3 +29,5 @@ public struct TypedCommand<Payload: Encodable & Sendable, Response: Decodable & 
         self.envelopeMetadata = envelopeMetadata
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Core
 
 /// Paginated query result
@@ -16,3 +17,5 @@ public struct QueryResult<T: Persistable>: Sendable {
         self.continuation = continuation
     }
 }
+
+#endif

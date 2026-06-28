@@ -1,10 +1,11 @@
+#if !os(WASI)
 import DatabaseClientProtocol
 
 /// In-process transport for testing without network
 ///
 /// Allows unit testing of DatabaseContext by providing a handler closure
 /// that processes ServiceEnvelope directly.
-public final class InProcessTransport: DatabaseTransport, Sendable {
+public final class InProcessTransport: Transport, Sendable {
 
     private let handler: @Sendable (ServiceEnvelope) async throws -> ServiceEnvelope
 
@@ -12,11 +13,13 @@ public final class InProcessTransport: DatabaseTransport, Sendable {
         self.handler = handler
     }
 
-    func send(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
+    public func send(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
         try await handler(envelope)
     }
 
-    func disconnect() async {
+    public func disconnect() async {
         // No-op for in-process
     }
 }
+
+#endif

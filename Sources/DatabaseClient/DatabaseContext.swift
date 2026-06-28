@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import QueryIR
@@ -11,8 +12,7 @@ import Synchronization
 ///
 /// Usage:
 /// ```swift
-/// let config = ClientConfiguration(url: serverURL, authToken: "sk-xxx")
-/// let context = try await DatabaseContext(configuration: config)
+/// let context = DatabaseContext(transport: transport)
 ///
 /// context.insert(User(name: "Alice", age: 30))
 /// try await context.save()
@@ -23,37 +23,16 @@ import Synchronization
 /// ```
 public final class DatabaseContext: Sendable {
 
-    private let transport: any DatabaseTransport
-    private let configuration: ClientConfiguration
+    private let transport: any Transport
     private let pendingChanges: Mutex<ChangeSet>
     private let localSchema: Schema?
 
-    /// Connect to a database server
+    /// Create a client context with an explicit transport.
     public init(
-        configuration: ClientConfiguration,
-        localSchema: Schema? = nil
-    ) async throws {
-        self.configuration = configuration
-        self.pendingChanges = Mutex(ChangeSet())
-        self.localSchema = localSchema
-
-        let ws = WebSocketTransport(
-            url: configuration.url,
-            authToken: configuration.authToken,
-            requestTimeout: configuration.timeout
-        )
-        try await ws.connect()
-        self.transport = ws
-    }
-
-    /// Create with a custom transport (for testing)
-    init(
-        transport: any DatabaseTransport,
-        configuration: ClientConfiguration = ClientConfiguration(url: URL(string: "ws://localhost")!),
+        transport: any Transport,
         localSchema: Schema? = nil
     ) {
         self.transport = transport
-        self.configuration = configuration
         self.pendingChanges = Mutex(ChangeSet())
         self.localSchema = localSchema
     }
@@ -449,3 +428,5 @@ public struct ClientCommandResult<Response: Sendable>: Sendable {
         self.replayed = replayed
     }
 }
+
+#endif

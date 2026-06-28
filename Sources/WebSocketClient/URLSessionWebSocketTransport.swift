@@ -1,11 +1,17 @@
+#if !os(WASI)
+import DatabaseClient
 import Foundation
 import DatabaseClientProtocol
 import Synchronization
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 /// WebSocket-based transport using URLSessionWebSocketTask
 ///
-/// Internal implementation — users interact with DatabaseContext only.
-final class WebSocketTransport: DatabaseTransport, Sendable {
+/// URLSession-backed implementation for native platforms.
+public final class URLSessionWebSocketTransport: Transport, Sendable {
     private struct PendingRequest {
         let continuation: CheckedContinuation<ServiceEnvelope, any Error>
         let timeoutTask: Task<Void, Never>?
@@ -23,7 +29,7 @@ final class WebSocketTransport: DatabaseTransport, Sendable {
     private let task: Mutex<URLSessionWebSocketTask?>
     private let requests: Mutex<RequestState>
 
-    init(
+    public init(
         url: URL,
         authToken: String? = nil,
         requestTimeout: TimeInterval = 30
@@ -36,7 +42,7 @@ final class WebSocketTransport: DatabaseTransport, Sendable {
         self.requests = Mutex(RequestState())
     }
 
-    func connect() async throws {
+    public func connect() async throws {
         var request = URLRequest(url: url)
         if let token = authToken {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -47,7 +53,7 @@ final class WebSocketTransport: DatabaseTransport, Sendable {
         startReceiving()
     }
 
-    func send(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
+    public func send(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
         let wsTask = task.withLock { $0 }
         guard let wsTask else {
             throw ServiceError(code: "NOT_CONNECTED", message: "WebSocket is not connected")
@@ -193,7 +199,7 @@ final class WebSocketTransport: DatabaseTransport, Sendable {
         }
     }
 
-    func disconnect() async {
+    public func disconnect() async {
         let wsTask = task.withLock { t -> URLSessionWebSocketTask? in
             let current = t
             t = nil
@@ -226,3 +232,5 @@ final class WebSocketTransport: DatabaseTransport, Sendable {
         }
     }
 }
+
+#endif

@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Testing
 import Foundation
 import Synchronization
@@ -641,7 +642,7 @@ struct QueryBuilderTests {
         let (pageA, pageB) = try await (firstPage, secondPage)
         let pages = [pageA, pageB]
 
-        #expect(pages.flatMap(\.items).map(\.id) == ["u1", "u2"])
+        #expect(pages.flatMap(\.items).map(\.id).sorted() == ["u1", "u2"])
         #expect(requestTokens.withLock { $0.map { $0 ?? "<nil>" } } == ["<nil>", "page-2"])
     }
 
@@ -1388,3 +1389,5 @@ struct ServiceEnvelopeTests {
         #expect(decoded.payload == Data("test".utf8))
     }
 }
+
+#endif

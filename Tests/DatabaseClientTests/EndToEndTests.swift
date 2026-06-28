@@ -1,24 +1,26 @@
+#if !os(WASI)
 import Foundation
 import Testing
 import Core
 import QueryIR
+import WebSocketClient
 import DatabaseClientProtocol
 @testable import DatabaseClient
 
-private func databaseClientE2ESchema() -> Schema {
+private func e2eSchema() -> Schema {
     Schema([
         TestUser.self,
-        DatabaseClientE2EUser.self,
+        PartitionedUser.self,
         TestArticle.self,
         TestReport.self,
     ])
 }
 
-@Suite("DatabaseClient E2E Tests")
-struct DatabaseClientE2ETests {
+@Suite("End-to-End Tests")
+struct EndToEndTests {
     @Test("context saves, queries, fetches schema, and deletes through service envelopes")
     func contextSavesQueriesFetchesSchemaAndDeletesThroughServiceEnvelopes() async throws {
-        let server = DatabaseClientE2EServer()
+        let server = TestServer()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
@@ -52,42 +54,42 @@ struct DatabaseClientE2ETests {
 
     @Test("context executes partitioned sorted pagination, annotations, and aggregate count")
     func contextExecutesPartitionedSortedPaginationAnnotationsAndAggregateCount() async throws {
-        let server = DatabaseClientE2EServer()
+        let server = TestServer()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
             }
         )
 
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "tenant-a-alice",
             tenantID: "tenant-a",
             name: "Alice",
             age: 36,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "tenant-a-bob",
             tenantID: "tenant-a",
             name: "Bob",
             age: 28,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "tenant-a-cara",
             tenantID: "tenant-a",
             name: "Cara",
             age: 41,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "tenant-a-dan",
             tenantID: "tenant-a",
             name: "Dan",
             age: 22,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "tenant-b-eve",
             tenantID: "tenant-b",
             name: "Eve",
@@ -96,11 +98,11 @@ struct DatabaseClientE2ETests {
         ))
         try await context.save()
 
-        let firstPage = try await context.find(DatabaseClientE2EUser.self)
+        let firstPage = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-a"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .where(\DatabaseClientE2EUser.age >= 25)
-            .sort(by: \DatabaseClientE2EUser.age, ascending: false)
+            .where(\PartitionedUser.active == true)
+            .where(\PartitionedUser.age >= 25)
+            .sort(by: \PartitionedUser.age, ascending: false)
             .pageSize(2)
             .executeAnnotated()
 
@@ -111,11 +113,11 @@ struct DatabaseClientE2ETests {
         #expect(firstPage.metadata["matchedRows"] == .int64(3))
         #expect(firstPage.records.compactMap { $0.annotations["rank"] } == [.int64(1), .int64(2)])
 
-        let secondPage = try await context.find(DatabaseClientE2EUser.self)
+        let secondPage = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-a"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .where(\DatabaseClientE2EUser.age >= 25)
-            .sort(by: \DatabaseClientE2EUser.age, ascending: false)
+            .where(\PartitionedUser.active == true)
+            .where(\PartitionedUser.age >= 25)
+            .sort(by: \PartitionedUser.age, ascending: false)
             .pageSize(2)
             .continuation(try #require(firstPage.continuation))
             .execute()
@@ -123,21 +125,21 @@ struct DatabaseClientE2ETests {
         #expect(secondPage.items.map(\.id) == ["tenant-a-bob"])
         #expect(secondPage.hasMore == false)
 
-        let matchedCount = try await context.find(DatabaseClientE2EUser.self)
+        let matchedCount = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-a"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .where(\DatabaseClientE2EUser.age >= 25)
+            .where(\PartitionedUser.active == true)
+            .where(\PartitionedUser.age >= 25)
             .count()
         #expect(matchedCount == 3)
 
         let bob = try await context.get(
-            DatabaseClientE2EUser.self,
+            PartitionedUser.self,
             id: "tenant-a-bob",
             partitionValues: ["tenantID": "tenant-a"]
         )
         #expect(bob?.name == "Bob")
 
-        context.delete(DatabaseClientE2EUser(
+        context.delete(PartitionedUser(
             id: "tenant-a-bob",
             tenantID: "tenant-a",
             name: "Bob",
@@ -146,17 +148,17 @@ struct DatabaseClientE2ETests {
         ))
         try await context.save()
 
-        let afterDeleteCount = try await context.find(DatabaseClientE2EUser.self)
+        let afterDeleteCount = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-a"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .where(\DatabaseClientE2EUser.age >= 25)
+            .where(\PartitionedUser.active == true)
+            .where(\PartitionedUser.age >= 25)
             .count()
         #expect(afterDeleteCount == 2)
     }
 
     @Test("cursor and stream drain multi-page query results without duplicates")
     func cursorAndStreamDrainMultiPageQueryResultsWithoutDuplicates() async throws {
-        let server = DatabaseClientE2EServer()
+        let server = TestServer()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
@@ -164,7 +166,7 @@ struct DatabaseClientE2ETests {
         )
 
         for index in 1...5 {
-            try context.insert(DatabaseClientE2EUser(
+            try context.insert(PartitionedUser(
                 id: "cursor-user-\(index)",
                 tenantID: "cursor-tenant",
                 name: "Cursor User \(index)",
@@ -174,9 +176,9 @@ struct DatabaseClientE2ETests {
         }
         try await context.save()
 
-        let cursor = context.find(DatabaseClientE2EUser.self)
+        let cursor = context.find(PartitionedUser.self)
             .partition(["tenantID": "cursor-tenant"])
-            .sort(by: \DatabaseClientE2EUser.age)
+            .sort(by: \PartitionedUser.age)
             .cursor(pageSize: 2)
 
         let firstPage = try await cursor.next()
@@ -193,9 +195,9 @@ struct DatabaseClientE2ETests {
         #expect(exhaustedPage.items.isEmpty)
 
         var streamedIDs: [String] = []
-        for try await user in context.find(DatabaseClientE2EUser.self)
+        for try await user in context.find(PartitionedUser.self)
             .partition(["tenantID": "cursor-tenant"])
-            .sort(by: \DatabaseClientE2EUser.age)
+            .sort(by: \PartitionedUser.age)
             .stream(pageSize: 2) {
             streamedIDs.append(user.id)
         }
@@ -212,7 +214,7 @@ struct DatabaseClientE2ETests {
 
     @Test("save failure restores pending changes for retry")
     func saveFailureRestoresPendingChangesForRetry() async throws {
-        let server = DatabaseClientE2EServer(saveFailures: 1)
+        let server = TestServer(saveFailures: 1)
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
@@ -248,21 +250,21 @@ struct DatabaseClientE2ETests {
 
     @Test("mixed change set failure restores updates deletes inserts and retries as one workflow")
     func mixedChangeSetFailureRestoresUpdatesDeletesInsertsAndRetriesAsOneWorkflow() async throws {
-        let server = DatabaseClientE2EServer(saveFailures: 1)
+        let server = TestServer(saveFailures: 1)
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
             }
         )
 
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "mixed-update",
             tenantID: "tenant-mixed",
             name: "Before Update",
             age: 31,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "mixed-delete",
             tenantID: "tenant-mixed",
             name: "Before Delete",
@@ -277,21 +279,21 @@ struct DatabaseClientE2ETests {
         }
         try await context.save()
 
-        try context.update(DatabaseClientE2EUser(
+        try context.update(PartitionedUser(
             id: "mixed-update",
             tenantID: "tenant-mixed",
             name: "After Update",
             age: 41,
             active: true
         ))
-        context.delete(DatabaseClientE2EUser(
+        context.delete(PartitionedUser(
             id: "mixed-delete",
             tenantID: "tenant-mixed",
             name: "Before Delete",
             age: 32,
             active: true
         ))
-        try context.insert(DatabaseClientE2EUser(
+        try context.insert(PartitionedUser(
             id: "mixed-insert",
             tenantID: "tenant-mixed",
             name: "Inserted",
@@ -300,10 +302,10 @@ struct DatabaseClientE2ETests {
         ))
         try await context.save()
 
-        let page = try await context.find(DatabaseClientE2EUser.self)
+        let page = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-mixed"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .sort(by: \DatabaseClientE2EUser.age)
+            .where(\PartitionedUser.active == true)
+            .sort(by: \PartitionedUser.age)
             .pageSize(1)
             .executeAnnotated()
 
@@ -312,10 +314,10 @@ struct DatabaseClientE2ETests {
         #expect(page.metadata["matchedRows"] == .int64(2))
         #expect(page.records.first?.annotations["tenantID"] == .string("tenant-mixed"))
 
-        let secondPage = try await context.find(DatabaseClientE2EUser.self)
+        let secondPage = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-mixed"])
-            .where(\DatabaseClientE2EUser.active == true)
-            .sort(by: \DatabaseClientE2EUser.age)
+            .where(\PartitionedUser.active == true)
+            .sort(by: \PartitionedUser.age)
             .pageSize(1)
             .continuation(try #require(page.continuation))
             .execute()
@@ -325,13 +327,13 @@ struct DatabaseClientE2ETests {
         #expect(secondPage.hasMore == false)
 
         let deleted = try await context.get(
-            DatabaseClientE2EUser.self,
+            PartitionedUser.self,
             id: "mixed-delete",
             partitionValues: ["tenantID": "tenant-mixed"]
         )
         #expect(deleted == nil)
 
-        let count = try await context.find(DatabaseClientE2EUser.self)
+        let count = try await context.find(PartitionedUser.self)
             .partition(["tenantID": "tenant-mixed"])
             .count()
         #expect(count == 2)
@@ -427,7 +429,7 @@ struct DatabaseClientE2ETests {
     @Test("unconnected WebSocket transport surfaces not connected error")
     func unconnectedWebSocketTransportSurfacesNotConnectedError() async throws {
         let context = DatabaseContext(
-            transport: WebSocketTransport(url: URL(string: "ws://localhost:1/database-client-e2e")!)
+            transport: URLSessionWebSocketTransport(url: URL(string: "ws://localhost:1/database-client-e2e")!)
         )
 
         do {
@@ -441,7 +443,7 @@ struct DatabaseClientE2ETests {
 
     @Test("disconnect resumes pending transport requests with disconnected error")
     func disconnectResumesPendingTransportRequestsWithDisconnectedError() async throws {
-        let transport = DatabaseClientE2EPendingTransport()
+        let transport = PendingTransport()
         let context = DatabaseContext(transport: transport)
 
         let queryTask = Task {
@@ -462,8 +464,8 @@ struct DatabaseClientE2ETests {
 
     @Test("context fetches polymorphic schema and decodes mixed polymorphic query results")
     func contextFetchesPolymorphicSchemaAndDecodesMixedPolymorphicQueryResults() async throws {
-        let server = DatabaseClientE2EServer()
-        let schema = databaseClientE2ESchema()
+        let server = TestServer()
+        let schema = e2eSchema()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
@@ -490,7 +492,7 @@ struct DatabaseClientE2ETests {
 
     @Test("polymorphic query without local schema surfaces schema required error")
     func polymorphicQueryWithoutLocalSchemaSurfacesSchemaRequiredError() async throws {
-        let server = DatabaseClientE2EServer()
+        let server = TestServer()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 try await server.handle(envelope)
@@ -510,7 +512,7 @@ struct DatabaseClientE2ETests {
 
     @Test("polymorphic query missing type annotation surfaces invalid response")
     func polymorphicQueryMissingTypeAnnotationSurfacesInvalidResponse() async throws {
-        let schema = databaseClientE2ESchema()
+        let schema = e2eSchema()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 #expect(envelope.operationID == "query")
@@ -540,7 +542,7 @@ struct DatabaseClientE2ETests {
 
     @Test("polymorphic query for unknown local group preserves typed error")
     func polymorphicQueryForUnknownLocalGroupPreservesTypedError() async throws {
-        let schema = databaseClientE2ESchema()
+        let schema = e2eSchema()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 #expect(envelope.operationID == "query")
@@ -573,7 +575,7 @@ struct DatabaseClientE2ETests {
 
     @Test("polymorphic query for unknown concrete type preserves typed error")
     func polymorphicQueryForUnknownConcreteTypePreservesTypedError() async throws {
-        let schema = databaseClientE2ESchema()
+        let schema = e2eSchema()
         let context = DatabaseContext(
             transport: InProcessTransport { envelope in
                 #expect(envelope.operationID == "query")
@@ -584,7 +586,7 @@ struct DatabaseClientE2ETests {
                             "title": .string("Unknown Type Article"),
                             "body": .string("Body"),
                         ],
-                        annotations: ["_typeName": .string("DatabaseClientUnknownDocument")]
+                        annotations: ["_typeName": .string("UnknownDocument")]
                     )
                 ])
                 return ServiceEnvelope(
@@ -605,7 +607,7 @@ struct DatabaseClientE2ETests {
     }
 }
 
-private actor DatabaseClientE2EPendingTransport: DatabaseTransport {
+private actor PendingTransport: Transport {
     private var pendingContinuation: CheckedContinuation<ServiceEnvelope, any Error>?
     private var pendingWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -640,7 +642,7 @@ private actor DatabaseClientE2EPendingTransport: DatabaseTransport {
     }
 }
 
-private actor DatabaseClientE2EServer {
+private actor TestServer {
     private struct StoredRow: Sendable {
         var entityName: String
         var fields: [String: FieldValue]
@@ -656,7 +658,7 @@ private actor DatabaseClientE2EServer {
     func handle(_ envelope: ServiceEnvelope) async throws -> ServiceEnvelope {
         switch envelope.operationID {
         case "schema":
-            let schema = databaseClientE2ESchema()
+            let schema = e2eSchema()
             let response = SchemaResponse(
                 entities: schema.entities,
                 polymorphicGroups: schema.polymorphicGroups
@@ -713,7 +715,7 @@ private actor DatabaseClientE2EServer {
             return QueryResponse(rows: [])
         }
 
-        let schema = databaseClientE2ESchema()
+        let schema = e2eSchema()
         let entityName = tableName(for: select.source)
         let logicalGroupIdentifier = polymorphicGroupIdentifier(for: select.source)
         var matchingRows = rows.values.filter { row in
@@ -896,7 +898,7 @@ private actor DatabaseClientE2EServer {
     }
 }
 
-private struct DatabaseClientE2EUser: Persistable, Codable, Sendable {
+private struct PartitionedUser: Persistable, Codable, Sendable {
     typealias ID = String
 
     var id: String
@@ -905,7 +907,7 @@ private struct DatabaseClientE2EUser: Persistable, Codable, Sendable {
     var age: Int
     var active: Bool
 
-    static var persistableType: String { "DatabaseClientE2EUser" }
+    static var persistableType: String { "PartitionedUser" }
     static var allFields: [String] { ["id", "tenantID", "name", "age", "active"] }
 
     static func fieldNumber(for fieldName: String) -> Int? {
@@ -932,28 +934,30 @@ private struct DatabaseClientE2EUser: Persistable, Codable, Sendable {
         }
     }
 
-    static func fieldName<Value>(for keyPath: KeyPath<DatabaseClientE2EUser, Value>) -> String {
-        if keyPath == \DatabaseClientE2EUser.id { return "id" }
-        if keyPath == \DatabaseClientE2EUser.tenantID { return "tenantID" }
-        if keyPath == \DatabaseClientE2EUser.name { return "name" }
-        if keyPath == \DatabaseClientE2EUser.age { return "age" }
-        if keyPath == \DatabaseClientE2EUser.active { return "active" }
+    static func fieldName<Value>(for keyPath: KeyPath<PartitionedUser, Value>) -> String {
+        if keyPath == \PartitionedUser.id { return "id" }
+        if keyPath == \PartitionedUser.tenantID { return "tenantID" }
+        if keyPath == \PartitionedUser.name { return "name" }
+        if keyPath == \PartitionedUser.age { return "age" }
+        if keyPath == \PartitionedUser.active { return "active" }
         return "\(keyPath)"
     }
 
-    static func fieldName(for keyPath: PartialKeyPath<DatabaseClientE2EUser>) -> String {
-        if keyPath == \DatabaseClientE2EUser.id { return "id" }
-        if keyPath == \DatabaseClientE2EUser.tenantID { return "tenantID" }
-        if keyPath == \DatabaseClientE2EUser.name { return "name" }
-        if keyPath == \DatabaseClientE2EUser.age { return "age" }
-        if keyPath == \DatabaseClientE2EUser.active { return "active" }
+    static func fieldName(for keyPath: PartialKeyPath<PartitionedUser>) -> String {
+        if keyPath == \PartitionedUser.id { return "id" }
+        if keyPath == \PartitionedUser.tenantID { return "tenantID" }
+        if keyPath == \PartitionedUser.name { return "name" }
+        if keyPath == \PartitionedUser.age { return "age" }
+        if keyPath == \PartitionedUser.active { return "active" }
         return "\(keyPath)"
     }
 
     static func fieldName(for keyPath: AnyKeyPath) -> String {
-        if let partialKeyPath = keyPath as? PartialKeyPath<DatabaseClientE2EUser> {
+        if let partialKeyPath = keyPath as? PartialKeyPath<PartitionedUser> {
             return fieldName(for: partialKeyPath)
         }
         return "\(keyPath)"
     }
 }
+
+#endif

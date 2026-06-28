@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 
@@ -205,3 +206,5 @@ public struct PolymorphicFullTextFacetedQueryResult: Sendable {
         self.continuation = continuation
     }
 }
+
+#endif

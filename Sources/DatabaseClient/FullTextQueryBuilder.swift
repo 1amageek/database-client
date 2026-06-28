@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import QueryIR
@@ -249,3 +250,5 @@ public struct FullTextQueryBuilder<T: Persistable>: Sendable {
         return facets
     }
 }
+
+#endif

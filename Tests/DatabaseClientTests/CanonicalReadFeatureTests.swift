@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Testing
 import Foundation
 import Core
@@ -603,3 +604,5 @@ struct CanonicalReadFeatureTests {
         #expect(result.continuation == "next-version-page")
     }
 }
+
+#endif

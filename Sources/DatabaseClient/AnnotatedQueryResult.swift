@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Core
 import DatabaseClientProtocol
 
@@ -55,3 +56,5 @@ public struct AnnotatedQueryResult<T: Persistable>: Sendable {
         self.metadata = metadata
     }
 }
+
+#endif

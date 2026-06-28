@@ -1,39 +1,39 @@
 import Testing
-import DatabaseKitWasmCore
+import DatabaseWire
 @testable import DatabaseClient
 
 @Suite("DatabaseClient Tests")
-struct DatabaseClientWireTests {
+struct WireClientTests {
     @Test func putRecordSendsBinaryRequestAndAcceptsEmptyResponse() throws {
-        let expected = DatabaseKitWasmRecord(
+        let expected = DatabaseWireRecord(
             typeName: "Article",
             id: "article-1",
             fields: [
-                DatabaseKitWasmNamedValue(name: "title", value: .string("Hello"))
+                DatabaseWireNamedValue(name: "title", value: .string("Hello"))
             ]
         )
-        let transport = FakeDatabaseTransport { request in
+        let transport = FakeWireTransport { request in
             #expect(request == .putRecord(expected))
             return .empty
         }
-        let client = DatabaseClient(transport: transport)
+        let client = WireClient(transport: transport)
 
         try client.putRecord(expected)
     }
 
     @Test func getRecordDecodesOptionalRecordResponse() throws {
-        let expected = DatabaseKitWasmRecord(
+        let expected = DatabaseWireRecord(
             typeName: "Article",
             id: "article-1",
             fields: [
-                DatabaseKitWasmNamedValue(name: "title", value: .string("Hello"))
+                DatabaseWireNamedValue(name: "title", value: .string("Hello"))
             ]
         )
-        let transport = FakeDatabaseTransport { request in
+        let transport = FakeWireTransport { request in
             #expect(request == .getRecord(typeName: "Article", id: "article-1"))
             return .record(expected)
         }
-        let client = DatabaseClient(transport: transport)
+        let client = WireClient(transport: transport)
 
         let record = try client.getRecord(typeName: "Article", id: "article-1")
 
@@ -41,18 +41,18 @@ struct DatabaseClientWireTests {
     }
 
     @Test func queryReturnsRecordList() throws {
-        let first = DatabaseKitWasmRecord(typeName: "Article", id: "a", fields: [])
-        let second = DatabaseKitWasmRecord(typeName: "Article", id: "b", fields: [])
-        let query = DatabaseKitWasmQueryRequest(
+        let first = DatabaseWireRecord(typeName: "Article", id: "a", fields: [])
+        let second = DatabaseWireRecord(typeName: "Article", id: "b", fields: [])
+        let query = DatabaseWireQueryRequest(
             typeName: "Article",
             predicate: .comparison(field: "status", op: .equal, value: .string("published")),
             limit: 10
         )
-        let transport = FakeDatabaseTransport { request in
+        let transport = FakeWireTransport { request in
             #expect(request == .query(query))
             return .records([first, second])
         }
-        let client = DatabaseClient(transport: transport)
+        let client = WireClient(transport: transport)
 
         let records = try client.query(query)
 
@@ -60,39 +60,39 @@ struct DatabaseClientWireTests {
     }
 
     @Test func remoteFailureThrowsTypedClientError() {
-        let transport = FakeDatabaseTransport { _ in
+        let transport = FakeWireTransport { _ in
             .failure(status: .executionFailure, message: "storage unavailable")
         }
-        let client = DatabaseClient(transport: transport)
+        let client = WireClient(transport: transport)
 
-        let operation: () throws(DatabaseClientError) -> Void = {
+        let operation: () throws(ClientError) -> Void = {
             _ = try client.getRecord(typeName: "Article", id: "article-1")
         }
         let error = captureError(operation)
 
-        #expect(error == DatabaseClientError.remoteFailure(
+        #expect(error == ClientError.remoteFailure(
             status: .executionFailure,
             message: "storage unavailable"
         ))
     }
 
     @Test func unexpectedPayloadThrowsTypedClientError() {
-        let transport = FakeDatabaseTransport { _ in
+        let transport = FakeWireTransport { _ in
             .records([])
         }
-        let client = DatabaseClient(transport: transport)
+        let client = WireClient(transport: transport)
 
-        let operation: () throws(DatabaseClientError) -> Void = {
+        let operation: () throws(ClientError) -> Void = {
             _ = try client.getRecord(typeName: "Article", id: "article-1")
         }
         let error = captureError(operation)
 
-        #expect(error == DatabaseClientError.unexpectedResponse(.records([])))
+        #expect(error == ClientError.unexpectedResponse(.records([])))
     }
 
     private func captureError(
-        _ operation: () throws(DatabaseClientError) -> Void
-    ) -> DatabaseClientError? {
+        _ operation: () throws(ClientError) -> Void
+    ) -> ClientError? {
         do {
             try operation()
             return nil
@@ -102,25 +102,25 @@ struct DatabaseClientWireTests {
     }
 }
 
-private struct FakeDatabaseTransport: DatabaseClientTransport {
-    private let handler: @Sendable (DatabaseKitWasmRequest) -> DatabaseKitWasmResponse
+private struct FakeWireTransport: WireTransport {
+    private let handler: @Sendable (DatabaseWireRequest) -> DatabaseWireResponse
 
     init(
-        _ handler: @escaping @Sendable (DatabaseKitWasmRequest) -> DatabaseKitWasmResponse
+        _ handler: @escaping @Sendable (DatabaseWireRequest) -> DatabaseWireResponse
     ) {
         self.handler = handler
     }
 
-    func send(_ request: [UInt8]) throws(DatabaseClientError) -> [UInt8] {
-        let decodedRequest: DatabaseKitWasmRequest
+    func send(_ request: [UInt8]) throws(ClientError) -> [UInt8] {
+        let decodedRequest: DatabaseWireRequest
         do {
-            decodedRequest = try DatabaseKitWasmCodec.decodeRequest(request)
+            decodedRequest = try DatabaseWireCodec.decodeRequest(request)
         } catch {
             throw .wire(error)
         }
         let response = handler(decodedRequest)
         do {
-            return try DatabaseKitWasmCodec.encode(response: response)
+            return try DatabaseWireCodec.encode(response: response)
         } catch {
             throw .wire(error)
         }

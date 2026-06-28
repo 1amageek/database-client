@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import QueryIR
@@ -7,13 +8,13 @@ import DatabaseClientProtocol
 public struct QueryBuilder<T: Persistable>: Sendable {
     private static var keysetContinuationSeed: String { "keyset:v1" }
 
-    private let transport: any DatabaseTransport
+    private let transport: any Transport
     private let entityName: String
     private var selectQuery: SelectQuery
     private var options: ReadExecutionOptions
     private var partitionValues: [String: String]?
 
-    init(transport: any DatabaseTransport, entityName: String) {
+    init(transport: any Transport, entityName: String) {
         self.transport = transport
         self.entityName = entityName
         self.selectQuery = SelectQuery(
@@ -215,3 +216,5 @@ public struct QueryBuilder<T: Persistable>: Sendable {
         cursor(pageSize: pageSize).stream()
     }
 }
+
+#endif

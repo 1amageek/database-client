@@ -1,3 +1,4 @@
+#if !os(WASI)
 import Foundation
 import Core
 import QueryIR
@@ -1405,3 +1406,5 @@ public struct PolymorphicVersionQueryBuilder: Sendable {
         return "\(groupIdentifier)_version_id"
     }
 }
+
+#endif

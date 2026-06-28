@@ -1,3 +1,4 @@
+#if !os(WASI)
 import DatabaseClientProtocol
 
 /// Options for one raw save request.
@@ -19,3 +20,5 @@ public struct SaveOptions: Sendable {
 
     public static let `default` = SaveOptions()
 }
+
+#endif
