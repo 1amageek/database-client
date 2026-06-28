@@ -1,9 +1,9 @@
 import Testing
 import DatabaseKitWasmCore
-@testable import DatabaseClientWasm
+@testable import DatabaseClient
 
-@Suite("DatabaseClientWasm Tests")
-struct DatabaseClientWasmTests {
+@Suite("DatabaseClient Tests")
+struct DatabaseClientWireTests {
     @Test func putRecordSendsBinaryRequestAndAcceptsEmptyResponse() throws {
         let expected = DatabaseKitWasmRecord(
             typeName: "Article",
@@ -12,11 +12,11 @@ struct DatabaseClientWasmTests {
                 DatabaseKitWasmNamedValue(name: "title", value: .string("Hello"))
             ]
         )
-        let transport = FakeWasmTransport { request in
+        let transport = FakeDatabaseTransport { request in
             #expect(request == .putRecord(expected))
             return .empty
         }
-        let client = DatabaseClientWasm(transport: transport)
+        let client = DatabaseClient(transport: transport)
 
         try client.putRecord(expected)
     }
@@ -29,11 +29,11 @@ struct DatabaseClientWasmTests {
                 DatabaseKitWasmNamedValue(name: "title", value: .string("Hello"))
             ]
         )
-        let transport = FakeWasmTransport { request in
+        let transport = FakeDatabaseTransport { request in
             #expect(request == .getRecord(typeName: "Article", id: "article-1"))
             return .record(expected)
         }
-        let client = DatabaseClientWasm(transport: transport)
+        let client = DatabaseClient(transport: transport)
 
         let record = try client.getRecord(typeName: "Article", id: "article-1")
 
@@ -48,11 +48,11 @@ struct DatabaseClientWasmTests {
             predicate: .comparison(field: "status", op: .equal, value: .string("published")),
             limit: 10
         )
-        let transport = FakeWasmTransport { request in
+        let transport = FakeDatabaseTransport { request in
             #expect(request == .query(query))
             return .records([first, second])
         }
-        let client = DatabaseClientWasm(transport: transport)
+        let client = DatabaseClient(transport: transport)
 
         let records = try client.query(query)
 
@@ -60,39 +60,39 @@ struct DatabaseClientWasmTests {
     }
 
     @Test func remoteFailureThrowsTypedClientError() {
-        let transport = FakeWasmTransport { _ in
+        let transport = FakeDatabaseTransport { _ in
             .failure(status: .executionFailure, message: "storage unavailable")
         }
-        let client = DatabaseClientWasm(transport: transport)
+        let client = DatabaseClient(transport: transport)
 
-        let operation: () throws(DatabaseClientWasmError) -> Void = {
+        let operation: () throws(DatabaseClientError) -> Void = {
             _ = try client.getRecord(typeName: "Article", id: "article-1")
         }
         let error = captureError(operation)
 
-        #expect(error == DatabaseClientWasmError.remoteFailure(
+        #expect(error == DatabaseClientError.remoteFailure(
             status: .executionFailure,
             message: "storage unavailable"
         ))
     }
 
     @Test func unexpectedPayloadThrowsTypedClientError() {
-        let transport = FakeWasmTransport { _ in
+        let transport = FakeDatabaseTransport { _ in
             .records([])
         }
-        let client = DatabaseClientWasm(transport: transport)
+        let client = DatabaseClient(transport: transport)
 
-        let operation: () throws(DatabaseClientWasmError) -> Void = {
+        let operation: () throws(DatabaseClientError) -> Void = {
             _ = try client.getRecord(typeName: "Article", id: "article-1")
         }
         let error = captureError(operation)
 
-        #expect(error == DatabaseClientWasmError.unexpectedResponse(.records([])))
+        #expect(error == DatabaseClientError.unexpectedResponse(.records([])))
     }
 
     private func captureError(
-        _ operation: () throws(DatabaseClientWasmError) -> Void
-    ) -> DatabaseClientWasmError? {
+        _ operation: () throws(DatabaseClientError) -> Void
+    ) -> DatabaseClientError? {
         do {
             try operation()
             return nil
@@ -102,7 +102,7 @@ struct DatabaseClientWasmTests {
     }
 }
 
-private struct FakeWasmTransport: DatabaseClientWasmTransport {
+private struct FakeDatabaseTransport: DatabaseClientTransport {
     private let handler: @Sendable (DatabaseKitWasmRequest) -> DatabaseKitWasmResponse
 
     init(
@@ -111,7 +111,7 @@ private struct FakeWasmTransport: DatabaseClientWasmTransport {
         self.handler = handler
     }
 
-    func send(_ request: [UInt8]) throws(DatabaseClientWasmError) -> [UInt8] {
+    func send(_ request: [UInt8]) throws(DatabaseClientError) -> [UInt8] {
         let decodedRequest: DatabaseKitWasmRequest
         do {
             decodedRequest = try DatabaseKitWasmCodec.decodeRequest(request)

@@ -1,6 +1,33 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
+let wireClientEnabled = Context.environment["DATABASE_WIRE"] == "1"
+    || Context.environment["DATABASE_CLIENT_WIRE"] == "1"
+
+let hostSourceExcludes = [
+    "AnnotatedQueryResult.swift",
+    "ClientConfiguration.swift",
+    "ClientQueryCursor.swift",
+    "DatabaseContext.swift",
+    "FeatureQueryResults.swift",
+    "FullTextQueryBuilder.swift",
+    "Internal",
+    "PolymorphicQueryBuilder.swift",
+    "PredicateOperators.swift",
+    "QueryBuilder.swift",
+    "QueryResult.swift",
+    "SaveOptions.swift",
+    "TypedCommand.swift",
+    "VectorQueryBuilder.swift",
+]
+
+let hostTestExcludes = [
+    "CanonicalReadFeatureTests.swift",
+    "DatabaseClientE2ETests.swift",
+    "DatabaseClientTests.swift",
+    "WebSocketTransportLifecycleTests.swift",
+]
+
 let package = Package(
     name: "database-client",
     platforms: [
@@ -12,7 +39,6 @@ let package = Package(
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
-        .library(name: "DatabaseClientWasm", targets: ["DatabaseClientWasm"]),
     ],
     dependencies: [
         .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0613.0"),
@@ -20,28 +46,29 @@ let package = Package(
     targets: [
         .target(
             name: "DatabaseClient",
-            dependencies: [
-                .product(name: "Core", package: "database-kit"),
-                .product(name: "QueryIR", package: "database-kit"),
-                .product(name: "DatabaseClientProtocol", package: "database-kit"),
-                .product(name: "Vector", package: "database-kit"),
-                .product(name: "FullText", package: "database-kit"),
-                .product(name: "Permuted", package: "database-kit"),
-            ]
-        ),
-        .target(
-            name: "DatabaseClientWasm",
-            dependencies: [
-                .product(name: "DatabaseKitWasmCore", package: "database-kit"),
-            ]
+            dependencies: wireClientEnabled
+                ? [
+                    .product(name: "DatabaseKitWasmCore", package: "database-kit"),
+                ]
+                : [
+                    .product(name: "Core", package: "database-kit"),
+                    .product(name: "QueryIR", package: "database-kit"),
+                    .product(name: "DatabaseClientProtocol", package: "database-kit"),
+                    .product(name: "Vector", package: "database-kit"),
+                    .product(name: "FullText", package: "database-kit"),
+                    .product(name: "Permuted", package: "database-kit"),
+                ],
+            exclude: wireClientEnabled ? hostSourceExcludes : ["Wire"]
         ),
         .testTarget(
             name: "DatabaseClientTests",
-            dependencies: ["DatabaseClient"]
-        ),
-        .testTarget(
-            name: "DatabaseClientWasmTests",
-            dependencies: ["DatabaseClientWasm"]
+            dependencies: wireClientEnabled
+                ? [
+                    "DatabaseClient",
+                    .product(name: "DatabaseKitWasmCore", package: "database-kit"),
+                ]
+                : ["DatabaseClient"],
+            exclude: wireClientEnabled ? hostTestExcludes : ["Wire"]
         ),
     ],
     swiftLanguageModes: [.v6]

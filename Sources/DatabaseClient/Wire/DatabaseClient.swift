@@ -1,7 +1,7 @@
 import DatabaseKitWasmCore
 
-/// Minimal Database client facade for WASM runtimes.
-public struct DatabaseClientWasm<Transport: DatabaseClientWasmTransport>: Sendable {
+/// Minimal Database client facade for wire runtimes.
+public struct DatabaseClient<Transport: DatabaseClientTransport>: Sendable {
     private let transport: Transport
 
     public init(transport: Transport) {
@@ -10,14 +10,14 @@ public struct DatabaseClientWasm<Transport: DatabaseClientWasmTransport>: Sendab
 
     public func applySchema(
         _ schema: DatabaseKitWasmSchema
-    ) throws(DatabaseClientWasmError) {
+    ) throws(DatabaseClientError) {
         let response = try dispatch(.applySchema(schema))
         try expectEmpty(response)
     }
 
     public func putRecord(
         _ record: DatabaseKitWasmRecord
-    ) throws(DatabaseClientWasmError) {
+    ) throws(DatabaseClientError) {
         let response = try dispatch(.putRecord(record))
         try expectEmpty(response)
     }
@@ -25,35 +25,35 @@ public struct DatabaseClientWasm<Transport: DatabaseClientWasmTransport>: Sendab
     public func getRecord(
         typeName: String,
         id: String
-    ) throws(DatabaseClientWasmError) -> DatabaseKitWasmRecord? {
+    ) throws(DatabaseClientError) -> DatabaseKitWasmRecord? {
         let response = try dispatch(.getRecord(typeName: typeName, id: id))
         switch response {
         case .record(let record):
             return record
         case .failure(let status, let message):
-            throw DatabaseClientWasmError.remoteFailure(status: status, message: message)
+            throw DatabaseClientError.remoteFailure(status: status, message: message)
         case .empty, .records:
-            throw DatabaseClientWasmError.unexpectedResponse(response)
+            throw DatabaseClientError.unexpectedResponse(response)
         }
     }
 
     public func query(
         _ query: DatabaseKitWasmQueryRequest
-    ) throws(DatabaseClientWasmError) -> [DatabaseKitWasmRecord] {
+    ) throws(DatabaseClientError) -> [DatabaseKitWasmRecord] {
         let response = try dispatch(.query(query))
         switch response {
         case .records(let records):
             return records
         case .failure(let status, let message):
-            throw DatabaseClientWasmError.remoteFailure(status: status, message: message)
+            throw DatabaseClientError.remoteFailure(status: status, message: message)
         case .empty, .record:
-            throw DatabaseClientWasmError.unexpectedResponse(response)
+            throw DatabaseClientError.unexpectedResponse(response)
         }
     }
 
     private func dispatch(
         _ request: DatabaseKitWasmRequest
-    ) throws(DatabaseClientWasmError) -> DatabaseKitWasmResponse {
+    ) throws(DatabaseClientError) -> DatabaseKitWasmResponse {
         let requestBytes: [UInt8]
         do {
             requestBytes = try DatabaseKitWasmCodec.encode(request: request)
@@ -70,14 +70,14 @@ public struct DatabaseClientWasm<Transport: DatabaseClientWasmTransport>: Sendab
 
     private func expectEmpty(
         _ response: DatabaseKitWasmResponse
-    ) throws(DatabaseClientWasmError) {
+    ) throws(DatabaseClientError) {
         switch response {
         case .empty:
             return
         case .failure(let status, let message):
-            throw DatabaseClientWasmError.remoteFailure(status: status, message: message)
+            throw DatabaseClientError.remoteFailure(status: status, message: message)
         case .record, .records:
-            throw DatabaseClientWasmError.unexpectedResponse(response)
+            throw DatabaseClientError.unexpectedResponse(response)
         }
     }
 }
