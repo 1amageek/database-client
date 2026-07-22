@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 import PackageDescription
 
 let hostPlatforms: [Platform] = [
@@ -21,41 +21,59 @@ let package = Package(
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
-        .library(name: "WebSocketClient", targets: ["WebSocketClient"]),
+        .library(name: "DatabaseClientWorker", targets: ["DatabaseClientWorker"]),
+        .library(name: "DatabaseClientHTTP", targets: ["DatabaseClientHTTP"]),
+        .library(name: "DatabaseClientWebSocket", targets: ["DatabaseClientWebSocket"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/1amageek/database-kit.git", from: "26.0628.0"),
+        .package(path: "../database-kit"),
+        .package(url: "https://github.com/1amageek/JavaScriptKit.git", from: "0.57.0"),
     ],
     targets: [
         .target(
             name: "DatabaseClient",
             dependencies: [
+                .product(name: "DatabaseValue", package: "database-kit"),
                 .product(name: "DatabaseWire", package: "database-kit"),
-                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "QueryIR", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "Vector", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "FullText", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "Permuted", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-            ]
+            ],
+            path: "Sources/DatabaseClient"
         ),
         .target(
-            name: "WebSocketClient",
+            name: "DatabaseClientWorker",
             dependencies: [
                 "DatabaseClient",
-                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-            ]
+                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseWire", package: "database-kit"),
+                .product(name: "JavaScriptKit", package: "JavaScriptKit"),
+            ],
+            path: "Sources/WorkerClient"
+        ),
+        .target(
+            name: "DatabaseClientWebSocket",
+            dependencies: [
+                "DatabaseClient",
+                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseWire", package: "database-kit"),
+            ],
+            path: "Sources/WebSocketClient"
+        ),
+        .target(
+            name: "DatabaseClientHTTP",
+            dependencies: [
+                "DatabaseClient",
+                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseWire", package: "database-kit"),
+            ],
+            path: "Sources/HTTPClient"
         ),
         .testTarget(
             name: "DatabaseClientTests",
             dependencies: [
                 "DatabaseClient",
-                .target(name: "WebSocketClient", condition: .when(platforms: hostPlatforms)),
+                .product(name: "DatabaseValue", package: "database-kit"),
+                .target(name: "DatabaseClientHTTP", condition: .when(platforms: hostPlatforms)),
+                .target(name: "DatabaseClientWebSocket", condition: .when(platforms: hostPlatforms)),
                 .product(name: "DatabaseWire", package: "database-kit"),
-                .product(name: "Core", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "QueryIR", package: "database-kit", condition: .when(platforms: hostPlatforms)),
-                .product(name: "DatabaseClientProtocol", package: "database-kit", condition: .when(platforms: hostPlatforms)),
             ]
         ),
     ],

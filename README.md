@@ -1,242 +1,131 @@
 # database-client
 
-Type-safe Swift client SDK for [database-framework](https://github.com/1amageek/database-framework). KeyPath-based queries, change tracking, transport injection, and optional URLSession-backed WebSocket connectivity.
+`database-client` is the transport-facing client for the canonical `DatabaseWire` protocol.
+Database semantics remain owned by the database runtime.
 
-## Overview
+## Products
 
-database-client provides a native Swift API for Apple platform apps to interact with a database-framework server. Models defined in [database-kit](https://github.com/1amageek/database-kit) are shared between client and server — the same `@Persistable` structs work on both sides.
+| Product | Runtime | Responsibility |
+|---|---|---|
+| `DatabaseClient` | Swift 6.4+ application and Embedded environments | Typed operation calls, request correlation, bounded `DatabaseWire` encode/decode |
+| `DatabaseClientWorker` | Hosted Worker runtime | Promise and `Uint8Array` transport |
+| `DatabaseClientHTTP` | Apple and Linux | Authenticated URLSession transport |
+| `DatabaseClientWebSocket` | Apple and Linux | Persistent WebSocket transport with request-ID correlation |
 
+The dependency boundary is intentionally one-way:
+
+```text
+DatabaseClient
+        │
+        ├── DatabaseClientWorker
+        ├── DatabaseClientHTTP
+        └── DatabaseClientWebSocket
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      database-kit                        │
-│  @Persistable models, IndexKind protocols, QueryIR       │
-└──────────┬───────────────────────────────┬───────────────┘
-           │                               │
-           ▼                               ▼
-┌─────────────────────┐       ┌─────────────────────────┐
-│  database-framework │       │    database-client       │
-│  FDBContainer       │◄─────│    DatabaseContext        │
-│  Index Maintainers  │  WS  │    KeyPath queries       │
-│  FoundationDB       │       │    Apple / WASI wire      │
-└─────────────────────┘       └─────────────────────────┘
-```
 
-## Installation
+`DatabaseClient` is the Foundation-free core of the Embedded dependency graph. It
+depends on `DatabaseWire`, `QueryIR`, and Foundation-free value types.
+`DatabaseClientWorker` adds only the Worker boundary needed by hosted Embedded
+WebAssembly. Foundation and URLSession remain isolated to the network adapter products.
+
+## Byte ownership
+
+`DatabaseBytes` is the owned byte type across the client and wire layers. Request and response
+values are passed by ownership sharing, payload decoding returns constant-time slices,
+and exact-size encoders transfer their final array storage through copy-on-write.
+
+Copies exist only where a foreign runtime requires a different owner:
+
+| Boundary | Request | Response | Reason |
+|---|---:|---:|---|
+| `DatabaseTransport` | 0 | 0 | Both sides exchange `DatabaseBytes` owners |
+| JavaScriptKit | 1 | 1 | JavaScript `Uint8Array` and Swift memory have independent lifetimes |
+| URLSession HTTP | 1 | 1 | `URLRequest` and returned `Data` expose Foundation-owned storage |
+| URLSession WebSocket | 1 | 1 | Binary frames are represented by Foundation-owned `Data` |
+
+The adapters copy directly between the foreign buffer and the final owner. They do not create
+an intermediate `[UInt8]` payload.
+
+## Typed calls
+
+Every operation statically associates its request and response types.
 
 ```swift
-dependencies: [
-    .package(url: "https://github.com/1amageek/database-client.git", from: "26.0628.0"),
-]
-```
+let transport = WorkerDatabaseTransport()
+let client = DatabaseClient(transport: transport)
 
-```swift
-.target(
-    name: "YourApp",
-    dependencies: [
-        .product(name: "DatabaseClient", package: "database-client"),
-        .product(name: "WebSocketClient", package: "database-client"),
-    ]
+let capabilities = try await client.execute(
+    CapabilitiesDescribeOperation.self,
+    request: DatabaseEmpty(),
+    metadata: DatabaseRequestMetadata(traceID: traceID)
 )
 ```
 
-## Quick Start
+`DatabaseClient` allocates a `UInt64` request ID, builds the canonical envelope, sends it
+through `DatabaseTransport`, validates response correlation, and decodes the typed
+response. A remote failure is returned as `DatabaseRemoteError` through
+`DatabaseCallError.remote`.
 
-### Connect
+For split-phase runtimes, `DatabaseCall<Operation>` exposes encoding and response decoding
+without owning a transport.
 
-```swift
-import DatabaseClient
-import WebSocketClient
+## Worker request contract
 
-let context = try await DatabaseContext(
-    webSocket: WebSocketConfiguration(
-        url: URL(string: "ws://localhost:8080/db")!,
-        authToken: "your-token"
-    )
-)
-```
+`WorkerDatabaseTransport` calls a global async request entrypoint named
+`__databaseExecute` by default. The entrypoint accepts and returns `Uint8Array` and must
+preserve bytes exactly.
+The returned value must own its complete `ArrayBuffer`: `byteOffset` is zero and `byteLength`
+equals `buffer.byteLength`. This prevents an offset view from being widened by a host bridge
+and keeps the response boundary to one copy into Swift-owned storage.
 
-`DatabaseContext` depends on the `Transport` protocol. Use `WebSocketClient` when you want the built-in URLSession-backed transport, or inject your own transport for another runtime.
-
-```swift
-import DatabaseClient
-
-let transport = MyTransport()
-let context = DatabaseContext(
-    transport: transport,
-    localSchema: nil
-)
-```
-
-### WebAssembly Wire Client
-
-The same `DatabaseClient` product can be built for WASI. In that environment, the high-level `DatabaseContext` API is not available because it depends on host platform APIs from database-kit. Use the small wire facade instead:
-
-```swift
-import DatabaseClient
-
-let client = WireClient(transport: MyWireTransport())
-let record = try client.getRecord(
-    typeName: "User",
-    id: "user-001"
-)
-```
-
-`WireTransport` is intentionally binary and minimal:
-
-```swift
-struct MyWireTransport: WireTransport {
-    func send(_ request: [UInt8]) throws(ClientError) -> [UInt8] {
-        fatalError("Bridge to the host runtime.")
-    }
+```javascript
+globalThis.__databaseExecute = async (request) => {
+  const id = env.CALENDAR_DATABASE.idFromName("calendar")
+  const stub = env.CALENDAR_DATABASE.get(id)
+  return stub.execute(request)
 }
 ```
 
-### URLSession Transport
+The JavaScript boundary does not parse queries, schemas, indexes, or transactions.
+
+## HTTP transport
+
+`HTTPDatabaseTransport` posts `application/octet-stream` and applies the configured
+authorization and database scope headers. It rejects oversized Foundation responses before
+the one ownership copy into `DatabaseBytes`.
 
 ```swift
-import DatabaseClient
-import WebSocketClient
-
-let transport = URLSessionWebSocketTransport(
-    url: URL(string: "ws://localhost:8080/db")!,
-    authToken: "your-token"
+let configuration = try HTTPDatabaseConfiguration(
+    endpoint: endpoint,
+    accessToken: accessToken,
+    databaseID: "calendar"
 )
-try await transport.connect()
-
-let context = DatabaseContext(transport: transport)
+let client = DatabaseClient(
+    transport: HTTPDatabaseTransport(configuration: configuration)
+)
 ```
 
-### CRUD
+## WebSocket transport
 
-`DatabaseContext` uses a change-tracking pattern — stage changes, then commit with `save()`.
+`WebSocketDatabaseTransport` keeps one WebSocket connection, correlates responses by
+the envelope request ID, and supports concurrent callers. Call `shutdown()` when the owning
+application stops.
 
-```swift
-// Insert
-context.insert(User(name: "Alice", age: 30))
-context.insert(User(name: "Bob", age: 25))
-try await context.save()
+## Embedded verification
 
-// Delete
-context.delete(user)
-try await context.save()
+Pin the compiler and SDK to the same Swift snapshot. For the currently validated snapshot:
+
+```bash
+/Users/1amageek/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-10-a.xctoolchain/usr/bin/swift \
+  build \
+  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-10-a_wasm-embedded \
+  --product DatabaseClient
 ```
 
-### Query
+The same command with `--product DatabaseClientWorker` verifies the Worker transport
+inside a true Embedded WebAssembly build.
 
-KeyPath-based predicates compile to `QueryIR.Expression` — the same representation used server-side.
+## Development dependency
 
-```swift
-let result = try await context.find(User.self)
-    .where(\.age > 20 && \.name != "Admin")
-    .sort(by: \.name)
-    .limit(20)
-    .execute()
-
-for user in result.items {
-    print(user.name)
-}
-```
-
-### Get by ID
-
-```swift
-let user = try await context.get(User.self, id: "user-001")
-```
-
-### Pagination
-
-```swift
-let firstPage = try await context.find(User.self)
-    .limit(20)
-    .execute()
-
-if firstPage.hasMore {
-    let nextPage = try await context.find(User.self)
-        .limit(20)
-        .continuation(firstPage.continuation!)
-        .execute()
-}
-```
-
-### Partition (Multi-tenant)
-
-```swift
-let orders = try await context.find(Order.self)
-    .partition(["tenantId": "tenant_123"])
-    .where(\.status == "shipped")
-    .execute()
-```
-
-### Count
-
-```swift
-let count = try await context.find(User.self)
-    .where(\.age >= 18)
-    .count()
-```
-
-## Architecture
-
-```
-┌─ Public API ─────────────────────────────────┐
-│ DatabaseContext                               │
-│   .insert(item) / .delete(item) / .save()    │
-│   .find(Type.self)                           │
-│     .where(\.field > value)  ← KeyPath ops   │
-│     .sort(by: \.field)                       │
-│     .execute()               → [T]           │
-└──────────────┬───────────────────────────────┘
-               │ QueryIR.Expression (Codable)
-┌─ Transport ──▼───────────────────────────────┐
-│ Transport (protocol)                         │
-│   ├─ URLSessionWebSocketTransport            │
-│   │   from WebSocketClient                   │
-│   └─ InProcessTransport                      │
-└──────────────┬───────────────────────────────┘
-               │ ServiceEnvelope (JSON)
-               ▼
-         database-framework server
-
-┌─ Wire Runtime ───────────────────────────────┐
-│ WireClient<Remote: WireTransport>            │
-│   DatabaseWire binary request / response     │
-└──────────────────────────────────────────────┘
-```
-
-### Shared Query Model
-
-Client and server share the same query representation via **QueryIR** (from database-kit). KeyPath operators (`\.age > 20`) produce `QueryIR.Expression` trees that are serialized as JSON and evaluated server-side.
-
-### Testing
-
-Use `InProcessTransport` to test without a network connection:
-
-```swift
-let transport = InProcessTransport { envelope in
-    // Return mock response
-}
-let context = DatabaseContext(transport: transport)
-```
-
-## Platform Support
-
-| Runtime | Support |
-|---------|---------|
-| iOS | 26.0+ |
-| macOS | 26.0+ |
-| tvOS | 26.0+ |
-| watchOS | 26.0+ |
-| visionOS | 26.0+ |
-| Linux | Supported by SwiftPM target conditions |
-| WASI | `DatabaseClient` wire API (`WireClient`, `WireTransport`, `ClientError`) |
-
-## Related Packages
-
-| Package | Role | Platform |
-|---------|------|----------|
-| **[database-kit](https://github.com/1amageek/database-kit)** | Model definitions, IndexKind protocols, QueryIR | iOS, macOS, Linux |
-| **[database-framework](https://github.com/1amageek/database-framework)** | Server-side index maintenance on FoundationDB | macOS, Linux |
-
-## License
-
-MIT License
+During the coordinated multi-repository replacement, `Package.swift` references the adjacent
+`../database-kit` checkout. The release step replaces this path with the canonical release tag
+after `database-kit` and its golden vectors are published.
