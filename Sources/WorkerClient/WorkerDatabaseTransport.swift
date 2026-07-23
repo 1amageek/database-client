@@ -3,7 +3,6 @@ import DatabaseClient
 import DatabaseValue
 import JavaScriptKit
 
-@MainActor
 public struct WorkerDatabaseTransport: DatabaseTransport {
     public let configuration: WorkerDatabaseConfiguration
 

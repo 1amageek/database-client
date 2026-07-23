@@ -2,23 +2,22 @@
 import DatabaseClient
 import DatabaseValue
 import JavaScriptKit
+import Synchronization
 
-@MainActor
-final class PendingDatabaseRequest {
-    private static let cancellationReason = "database-client:cancelled"
-    private static let timeoutReason = "database-client:timeout"
+final class PendingDatabaseRequest: Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<
+            Result<DatabaseBytes, DatabaseTransportError>,
+            Never
+        >?
+        var unclaimedResult: Result<DatabaseBytes, DatabaseTransportError>?
+        var deadline: DatabaseRequestDeadline?
+        var isCompleted = false
+    }
 
     private let timeoutMilliseconds: UInt32
     private let maximumResponseBytes: Int
-    private var continuation: CheckedContinuation<
-        Result<DatabaseBytes, DatabaseTransportError>,
-        Never
-    >?
-    private var unclaimedResult: Result<DatabaseBytes, DatabaseTransportError>?
-    private var resolveCancellation: ((JSPromise.Result) -> Void)?
-    private var resolveTimeout: ((JSPromise.Result) -> Void)?
-    private var timeoutTimer: JSTimer?
-    private var isCompleted = false
+    private let state = Mutex(State())
 
     init(
         timeoutMilliseconds: UInt32,
@@ -31,84 +30,51 @@ final class PendingDatabaseRequest {
     func wait(
         for responsePromise: JSPromise
     ) async -> Result<DatabaseBytes, DatabaseTransportError> {
-        if let setupError = prepareResponseObservation(for: responsePromise) {
-            return .failure(setupError)
-        }
+        await observe(for: responsePromise)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 attachResponseContinuation(continuation)
             }
         } onCancel: {
-            Task { @MainActor in
-                self.handleCancellation()
-            }
+            self.complete(with: .failure(.cancelled))
         }
     }
 
-    private func prepareResponseObservation(
+    private func observe(
         for responsePromise: JSPromise
-    ) -> DatabaseTransportError? {
-        var resolveCancellation: ((JSPromise.Result) -> Void)?
-        let cancellationPromise = JSPromise { resolution in
-            resolveCancellation = resolution
-        }
-        var resolveTimeout: ((JSPromise.Result) -> Void)?
-        let timeoutPromise = JSPromise { resolution in
-            resolveTimeout = resolution
-        }
-        guard let resolveCancellation,
-              let resolveTimeout,
-              let promiseConstructor = JSPromise.constructor,
-              let arrayConstructor = JSArray.constructor,
-              let raceFunction = promiseConstructor["race"].function else {
-            return .unavailable(
-                "Database request completion support is unavailable"
-            )
-        }
-        self.resolveCancellation = resolveCancellation
-        self.resolveTimeout = resolveTimeout
-
-        let promises = arrayConstructor.new(
-            responsePromise.jsObject,
-            cancellationPromise.jsObject,
-            timeoutPromise.jsObject
-        )
-        let raceValue = raceFunction(
-            this: promiseConstructor,
-            promises
-        )
-        guard let racePromise = JSPromise(from: raceValue) else {
-            return .unavailable(
-                "Database request completion did not return a Promise"
-            )
-        }
-        timeoutTimer = JSTimer(
-            millisecondsDelay: Double(timeoutMilliseconds)
+    ) async {
+        let deadline = DatabaseRequestDeadline()
+        await deadline.schedule(
+            afterMilliseconds: timeoutMilliseconds
         ) {
-            Task { @MainActor in
-                self.handleTimeout()
-            }
+            self.complete(with: .failure(.timeout))
         }
-        _ = racePromise.then(
+        let shouldObserveResponse = state.withLock { state in
+            guard !state.isCompleted else {
+                return false
+            }
+            state.deadline = deadline
+            return true
+        }
+        guard shouldObserveResponse else {
+            await deadline.cancel()
+            return
+        }
+        _ = responsePromise.then(
             success: { value in
                 let result = Self.decodeResponse(
                     value,
                     maximumResponseBytes: self.maximumResponseBytes
                 )
-                Task { @MainActor in
-                    self.complete(with: result)
-                }
+                self.complete(with: result)
                 return .undefined
             },
             failure: { reason in
                 let error = Self.transportError(from: reason)
-                Task { @MainActor in
-                    self.complete(with: .failure(error))
-                }
+                self.complete(with: .failure(error))
                 return .undefined
             }
         )
-        return nil
     }
 
     private func attachResponseContinuation(
@@ -117,49 +83,54 @@ final class PendingDatabaseRequest {
             Never
         >
     ) {
+        let unclaimedResult = state.withLock { state
+            -> Result<DatabaseBytes, DatabaseTransportError>? in
+            if let result = state.unclaimedResult {
+                state.unclaimedResult = nil
+                return result
+            }
+            state.continuation = continuation
+            return nil
+        }
         if let unclaimedResult {
-            self.unclaimedResult = nil
             continuation.resume(returning: unclaimedResult)
-            return
         }
-        self.continuation = continuation
-    }
-
-    private func handleCancellation() {
-        guard !isCompleted else {
-            return
-        }
-        resolveCancellation?(
-            .failure(.string(Self.cancellationReason))
-        )
-        complete(with: .failure(.cancelled))
-    }
-
-    private func handleTimeout() {
-        guard !isCompleted else {
-            return
-        }
-        resolveTimeout?(
-            .failure(.string(Self.timeoutReason))
-        )
-        complete(with: .failure(.timeout))
     }
 
     private func complete(
         with result: Result<DatabaseBytes, DatabaseTransportError>
     ) {
-        guard !isCompleted else {
+        let completion = state.withLock { state
+            -> (
+                CheckedContinuation<
+                    Result<DatabaseBytes, DatabaseTransportError>,
+                    Never
+                >?,
+                DatabaseRequestDeadline?
+            )? in
+            guard !state.isCompleted else {
+                return nil
+            }
+            state.isCompleted = true
+            let continuation = state.continuation
+            state.continuation = nil
+            if continuation == nil {
+                state.unclaimedResult = result
+            }
+            let deadline = state.deadline
+            state.deadline = nil
+            return (continuation, deadline)
+        }
+        guard let completion else {
             return
         }
-        isCompleted = true
-        timeoutTimer = nil
-        resolveCancellation = nil
-        resolveTimeout = nil
-        if let continuation {
-            self.continuation = nil
+        if let deadline = completion.1 {
+            Task {
+                await deadline.cancel()
+            }
+        }
+        if let continuation = completion.0 {
             continuation.resume(returning: result)
-        } else {
-            unclaimedResult = result
         }
     }
 
@@ -197,17 +168,10 @@ final class PendingDatabaseRequest {
     private static func transportError(
         from reason: JSValue
     ) -> DatabaseTransportError {
-        switch reason.string {
-        case Self.cancellationReason:
-            return .cancelled
-        case Self.timeoutReason:
-            return .timeout
-        default:
-            return .rejected(
-                code: "database_entrypoint_rejected",
-                message: String(describing: reason)
-            )
-        }
+        .rejected(
+            code: "database_entrypoint_rejected",
+            message: String(describing: reason)
+        )
     }
 }
 #endif

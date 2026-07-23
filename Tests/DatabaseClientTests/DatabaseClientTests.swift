@@ -57,6 +57,49 @@ struct DatabaseClientTests {
         #expect(capturedIDs.withLock { $0 } == [41, 42])
     }
 
+    @Test("concurrent calls reserve unique identifiers without serializing transport I/O")
+    func concurrentCallsRemainIndependent() async throws {
+        let barrier = ConcurrentCallBarrier(participantCount: 2)
+        let capturedIDs = Mutex<[UInt64]>([])
+        let transport = ScriptedDatabaseTransport {
+            requestBytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(requestBytes)
+            capturedIDs.withLock { $0.append(request.requestID) }
+            await barrier.arrive()
+            let payload = try encodeWire(
+                CapabilitiesDescribeOperation.Response(
+                    runtimeVersion: "1",
+                    features: [],
+                    jobOperations: []
+                )
+            )
+            return try encodeWire(
+                response: DatabaseWireResponseEnvelope(
+                    requestID: request.requestID,
+                    operation: request.operation,
+                    payload: .success(payload)
+                )
+            )
+        }
+        let client = DatabaseClient(
+            transport: transport,
+            firstRequestID: 100
+        )
+
+        async let first = client.execute(
+            CapabilitiesDescribeOperation.self,
+            request: DatabaseEmpty()
+        )
+        async let second = client.execute(
+            CapabilitiesDescribeOperation.self,
+            request: DatabaseEmpty()
+        )
+        let responses = try await [first, second]
+
+        #expect(responses.allSatisfy { $0.runtimeVersion == "1" })
+        #expect(capturedIDs.withLock { $0.sorted() } == [100, 101])
+    }
+
     @Test("a remote failure remains typed")
     func remoteFailureRemainsTyped() throws {
         let remoteError = DatabaseRemoteError(
@@ -361,6 +404,32 @@ private struct ScriptedDatabaseTransport: DatabaseTransport {
 
     func send(_ request: DatabaseBytes) async throws(DatabaseTransportError) -> DatabaseBytes {
         try await responseProvider(request)
+    }
+}
+
+private actor ConcurrentCallBarrier {
+    private let participantCount: Int
+    private var arrivalCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(participantCount: Int) {
+        precondition(participantCount > 0)
+        self.participantCount = participantCount
+    }
+
+    func arrive() async {
+        arrivalCount += 1
+        if arrivalCount == participantCount {
+            let waiters = self.waiters
+            self.waiters.removeAll(keepingCapacity: false)
+            for waiter in waiters {
+                waiter.resume()
+            }
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }
 

@@ -1,10 +1,11 @@
 import DatabaseValue
 public import DatabaseWire
+import Synchronization
 
-public actor DatabaseClient<Transport: DatabaseTransport> {
+public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
     private let transport: Transport
     let limits: DatabaseWireLimits
-    private var nextRequestID: UInt64
+    private let nextRequestID: Mutex<UInt64>
 
     public init(
         transport: Transport,
@@ -13,7 +14,7 @@ public actor DatabaseClient<Transport: DatabaseTransport> {
     ) {
         self.transport = transport
         self.limits = limits
-        self.nextRequestID = firstRequestID
+        self.nextRequestID = Mutex(firstRequestID)
     }
 
     public final func execute<Operation: DatabaseOperation>(
@@ -50,8 +51,10 @@ public actor DatabaseClient<Transport: DatabaseTransport> {
     }
 
     private func reserveRequestID() -> UInt64 {
-        let reservedRequestID = nextRequestID
-        nextRequestID = nextRequestID == UInt64.max ? 0 : nextRequestID + 1
-        return reservedRequestID
+        nextRequestID.withLock { nextRequestID in
+            let reservedRequestID = nextRequestID
+            nextRequestID = nextRequestID == UInt64.max ? 0 : nextRequestID + 1
+            return reservedRequestID
+        }
     }
 }
