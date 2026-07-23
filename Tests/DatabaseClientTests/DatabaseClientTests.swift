@@ -88,6 +88,26 @@ struct DatabaseClientTests {
             jobID: DatabaseUUID(high: 0x1111, low: 0x2222),
             operation: try CapabilitiesSnapshotJob.jobOperationIdentifier()
         )
+        let statusPayload = try encodeWire(
+            try JobStatusOperation.Response(
+                state: .running,
+                job: job,
+                completedWorkUnits: 3,
+                totalWorkUnits: 9,
+                executionCount: 1,
+                currentSliceAttempt: 1,
+                updatedAt: DatabaseTimestamp(
+                    secondsSinceUnixEpoch: 1_700_000_000
+                )
+            )
+        )
+        let cancellationPayload = try encodeWire(
+            try JobCancelOperation.Response(
+                job: job,
+                state: .committingOutcome,
+                accepted: true
+            )
+        )
         let observedOperations = Mutex<[DatabaseOperationIdentifier]>([])
         let transport = ScriptedDatabaseTransport {
             requestBytes throws(DatabaseTransportError) in
@@ -110,32 +130,14 @@ struct DatabaseClientTests {
                     from: envelope.payload
                 )
                 #expect(request.job == job)
-                responsePayload = try encodeWire(
-                    JobStatusOperation.Response(
-                        state: .running,
-                        job: job,
-                        completedWorkUnits: 3,
-                        totalWorkUnits: 9,
-                        executionCount: 1,
-                        currentSliceAttempt: 1,
-                        updatedAt: DatabaseTimestamp(
-                            secondsSinceUnixEpoch: 1_700_000_000
-                        )
-                    )
-                )
+                responsePayload = statusPayload
             case .jobCancel:
                 let request = try decodeWire(
                     JobCancelOperation.Request.self,
                     from: envelope.payload
                 )
                 #expect(request.job == job)
-                responsePayload = try encodeWire(
-                    JobCancelOperation.Response(
-                        job: job,
-                        state: .cancelled,
-                        accepted: true
-                    )
-                )
+                responsePayload = cancellationPayload
             default:
                 throw .invalidResponse("Unexpected job lifecycle operation")
             }
