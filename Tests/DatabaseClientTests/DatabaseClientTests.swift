@@ -104,7 +104,7 @@ struct DatabaseClientTests {
         let cancellationPayload = try encodeWire(
             try JobCancelOperation.Response(
                 job: job,
-                state: .committingOutcome,
+                state: .committingUnsuccessfulOutcome,
                 accepted: true
             )
         )
