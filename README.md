@@ -73,9 +73,9 @@ without owning a transport.
 `WorkerDatabaseTransport` calls a global async request entrypoint named
 `__databaseExecute` by default. The entrypoint accepts and returns `Uint8Array` and must
 preserve bytes exactly.
-The returned value must own its complete `ArrayBuffer`: `byteOffset` is zero and `byteLength`
-equals `buffer.byteLength`. This prevents an offset view from being widened by a host bridge
-and keeps the response boundary to one copy into Swift-owned storage.
+The returned value may be an offset view. The transport copies exactly the view's
+`byteOffset..<byteOffset + byteLength` range once into Swift-owned storage; it never widens
+the response to the complete backing `ArrayBuffer`.
 
 ```javascript
 globalThis.__databaseExecute = async (request) => {
@@ -115,9 +115,9 @@ application stops.
 Pin the compiler and SDK to the same Swift snapshot. For the currently validated snapshot:
 
 ```bash
-/Users/1amageek/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-10-a.xctoolchain/usr/bin/swift \
+/Users/1amageek/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift \
   build \
-  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-10-a_wasm-embedded \
+  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded \
   --product DatabaseClient
 ```
 
