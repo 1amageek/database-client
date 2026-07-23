@@ -9,14 +9,17 @@ import FoundationNetworking
 
 public actor HTTPDatabaseTransport: DatabaseTransport {
     private let configuration: HTTPDatabaseConfiguration
-    private let sessionConfiguration: URLSessionConfiguration
+    private let session: HTTPDatabaseSession
 
     public init(
         configuration: HTTPDatabaseConfiguration,
-        session: URLSession = .shared
+        sessionConfiguration: URLSessionConfiguration = .default
     ) {
         self.configuration = configuration
-        self.sessionConfiguration = session.configuration
+        self.session = HTTPDatabaseSession(
+            maximumResponseBytes: configuration.maximumResponseBytes,
+            configuration: sessionConfiguration
+        )
     }
 
     public func send(
@@ -53,11 +56,7 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
         let responseBytes: DatabaseBytes
         let urlResponse: URLResponse
         do {
-            let requestSession = HTTPDatabaseRequestSession(
-                maximumResponseBytes: configuration.maximumResponseBytes,
-                configuration: sessionConfiguration
-            )
-            (responseBytes, urlResponse) = try await requestSession.data(
+            (responseBytes, urlResponse) = try await session.data(
                 for: urlRequest
             )
         } catch is CancellationError {
@@ -81,6 +80,10 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
             throw .rejected(code: "http_status_\(httpResponse.statusCode)", message: message)
         }
         return responseBytes
+    }
+
+    public func shutdown() {
+        session.invalidate()
     }
 }
 #endif

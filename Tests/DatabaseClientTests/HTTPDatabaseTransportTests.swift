@@ -36,7 +36,7 @@ struct HTTPDatabaseTransportTests {
         )
         let transport = HTTPDatabaseTransport(
             configuration: configuration,
-            session: makeSession()
+            sessionConfiguration: makeSessionConfiguration()
         )
 
         let response = try await transport.send([2, 4, 8])
@@ -73,7 +73,7 @@ struct HTTPDatabaseTransportTests {
         )
         let transport = HTTPDatabaseTransport(
             configuration: configuration,
-            session: makeSession()
+            sessionConfiguration: makeSessionConfiguration()
         )
 
         do {
@@ -116,7 +116,7 @@ struct HTTPDatabaseTransportTests {
         )
         let transport = HTTPDatabaseTransport(
             configuration: configuration,
-            session: makeSession()
+            sessionConfiguration: makeSessionConfiguration()
         )
 
         await #expect(
@@ -150,7 +150,7 @@ struct HTTPDatabaseTransportTests {
         )
         let transport = HTTPDatabaseTransport(
             configuration: configuration,
-            session: makeSession()
+            sessionConfiguration: makeSessionConfiguration()
         )
 
         await #expect(
@@ -182,7 +182,7 @@ struct HTTPDatabaseTransportTests {
         )
         let transport = HTTPDatabaseTransport(
             configuration: configuration,
-            session: makeSession()
+            sessionConfiguration: makeSessionConfiguration()
         )
 
         await #expect(
@@ -194,10 +194,32 @@ struct HTTPDatabaseTransportTests {
         }
     }
 
-    private func makeSession() -> URLSession {
+    @Test("transport rejects requests after explicit shutdown")
+    func transportRejectsRequestsAfterShutdown() async throws {
+        let configuration = try HTTPDatabaseConfiguration(
+            endpoint: URL(string: "https://database.example.test")!,
+            accessToken: "token"
+        )
+        let transport = HTTPDatabaseTransport(
+            configuration: configuration,
+            sessionConfiguration: makeSessionConfiguration()
+        )
+
+        await transport.shutdown()
+
+        await #expect(
+            throws: DatabaseTransportError.unavailable(
+                "HTTP database session is invalidated"
+            )
+        ) {
+            try await transport.send([1])
+        }
+    }
+
+    private func makeSessionConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ScriptedHTTPDatabaseEndpoint.self]
-        return URLSession(configuration: configuration)
+        return configuration
     }
 }
 
