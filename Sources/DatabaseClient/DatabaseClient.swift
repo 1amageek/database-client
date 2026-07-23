@@ -16,7 +16,7 @@ public actor DatabaseClient<Transport: DatabaseTransport> {
         self.nextRequestID = firstRequestID
     }
 
-    public func execute<Operation: DatabaseOperation>(
+    public final func execute<Operation: DatabaseOperation>(
         _ operation: Operation.Type = Operation.self,
         request: Operation.Request,
         metadata: DatabaseRequestMetadata = DatabaseRequestMetadata()
