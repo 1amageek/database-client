@@ -22,7 +22,12 @@
 
 ## Concurrency, Data, and Error Contracts
 
-- Use a Mutex only for short request-correlation state. Never hold it across `await` or transport I/O.
+- The Embedded request identifier source uses `Atomic<UInt64>`, starts at one,
+  never wraps, and reports exhaustion. Embedded code does not depend on
+  `Mutex`.
+- A platform adapter may use a mutex only for short request-correlation state
+  when that platform provides it. Never hold it across `await` or transport
+  I/O.
 - A transport must complete each request exactly once with bytes or a typed transport error. Cancellation and timeout must not become success.
 - Preserve owned `ByteString` values through the core path. Copy only when an
   external runtime cannot retain Swift memory; copy directly into the final
