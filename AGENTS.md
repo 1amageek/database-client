@@ -2,9 +2,14 @@
 
 ## Responsibility
 
-- The core client turns a typed DatabaseOperation into DatabaseWire request bytes, sends those bytes through an injected transport, and decodes the correlated typed response.
+- The core client turns a typed canonical database operation into DatabaseWire
+  request bytes, sends those bytes through an injected transport, and decodes
+  the correlated typed response.
 - Transport products adapt that contract to JavaScript promises, HTTP, or WebSocket APIs. They do not interpret queries, schemas, graph semantics, transactions, or storage operations.
 - Request correlation state is short in-memory state. It must not serialize transport I/O.
+- Primitive values come from `DatabaseTypes`; query, schema, and operation
+  contracts come from `database-kit`. The client must not relocate either
+  contract merely to simplify its dependency graph.
 
 ## Naming
 
@@ -19,7 +24,9 @@
 
 - Use a Mutex only for short request-correlation state. Never hold it across `await` or transport I/O.
 - A transport must complete each request exactly once with bytes or a typed transport error. Cancellation and timeout must not become success.
-- Preserve owned DatabaseBytes through the core path. Copy only when an external runtime cannot retain Swift memory; copy directly into the final owner without an intermediate array.
+- Preserve owned `ByteString` values through the core path. Copy only when an
+  external runtime cannot retain Swift memory; copy directly into the final
+  owner without an intermediate array.
 - Foundation, Codable, URLSession, and JavaScriptKit must not enter the Embedded core target.
 - Do not silently retry, replace malformed responses, or return cached success after transport or decode failure.
 - This is version 1. Remove superseded APIs instead of retaining compatibility paths.
