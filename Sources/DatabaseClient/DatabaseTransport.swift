@@ -1,7 +1,7 @@
-public import DatabaseValue
+public import DatabaseTypes
 
 public protocol DatabaseTransport: Sendable {
     func send(
-        _ request: DatabaseBytes
-    ) async throws(DatabaseTransportError) -> DatabaseBytes
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString
 }

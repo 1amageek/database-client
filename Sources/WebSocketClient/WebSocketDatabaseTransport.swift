@@ -1,6 +1,6 @@
 #if !os(WASI)
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import DatabaseWire
 import Foundation
 
@@ -30,8 +30,8 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     }
 
     public func send(
-        _ request: DatabaseBytes
-    ) async throws(DatabaseTransportError) -> DatabaseBytes {
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString {
         guard request.count <= configuration.maximumRequestBytes else {
             throw .rejected(
                 code: "request_too_large",
@@ -40,15 +40,14 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         }
         let requestHeader: DatabaseWireEnvelopeHeader
         do {
-            requestHeader = try DatabaseEnvelopeCodec.decodeRequestHeader(
-                request
-            )
+            requestHeader = try DatabaseWireDecoder()
+                .decodeRequestHeader(request)
         } catch {
             throw .invalidRequest(
                 "WebSocket request has an invalid DatabaseWire header"
             )
         }
-        let activeConnection = ensureConnection()
+        let activeConnection = try ensureConnection()
         let requestKey = DatabaseRequestKey(
             connectionID: activeConnection.id,
             requestID: requestHeader.requestID
@@ -95,9 +94,15 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         }
     }
 
-    private func ensureConnection() -> ActiveConnection {
+    private func ensureConnection() throws(DatabaseTransportError)
+        -> ActiveConnection {
         if let connection {
             return connection
+        }
+        guard nextConnectionID != 0 else {
+            throw .unavailable(
+                "WebSocket connection identifier space is exhausted"
+            )
         }
         var request = URLRequest(
             url: configuration.endpoint,
@@ -107,7 +112,9 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         request.setValue("Bearer \(configuration.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(configuration.databaseID, forHTTPHeaderField: "x-database-id")
         let connectionID = nextConnectionID
-        nextConnectionID &+= 1
+        nextConnectionID = connectionID == UInt64.max
+            ? 0
+            : connectionID + 1
         let databaseConnection = connector.connect(for: request)
         let activeConnection = ActiveConnection(
             id: connectionID,
@@ -121,7 +128,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     }
 
     private func sendFrame(
-        _ bytes: DatabaseBytes,
+        _ bytes: ByteString,
         requestKey: DatabaseRequestKey,
         over connection: any DatabaseWebSocketConnection
     ) async {
@@ -146,7 +153,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
                 guard connection?.id == activeConnection.id else {
                     return
                 }
-                let bytes: DatabaseBytes
+                let bytes: ByteString
                 switch message {
                 case .data(let data):
                     guard data.count <= configuration.maximumResponseBytes else {
@@ -154,7 +161,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
                             "WebSocket response exceeds the configured byte limit"
                         )
                     }
-                    bytes = DatabaseBytes(
+                    bytes = ByteString(
                         retaining: ReceivedWebSocketFrameByteOwner(data: data)
                     )
                 case .string:
@@ -165,7 +172,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
 
                 let responseHeader: DatabaseWireEnvelopeHeader
                 do {
-                    responseHeader = try DatabaseEnvelopeCodec
+                    responseHeader = try DatabaseWireDecoder()
                         .decodeResponseHeader(bytes)
                 } catch {
                     throw DatabaseTransportError.invalidResponse(
@@ -218,7 +225,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     private func registerPendingRequest(
         requestKey: DatabaseRequestKey,
         continuation: CheckedContinuation<
-            Result<DatabaseBytes, DatabaseTransportError>,
+            Result<ByteString, DatabaseTransportError>,
             Never
         >
     ) {
@@ -296,7 +303,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
 
     private struct PendingRequest: Sendable {
         let continuation: CheckedContinuation<
-            Result<DatabaseBytes, DatabaseTransportError>,
+            Result<ByteString, DatabaseTransportError>,
             Never
         >
         let timeoutTask: Task<Void, Never>

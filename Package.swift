@@ -21,38 +21,45 @@ let package = Package(
     ],
     products: [
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
-        .library(name: "DatabaseClientWorker", targets: ["DatabaseClientWorker"]),
+        .library(
+            name: "DatabaseClientJavaScript",
+            targets: ["DatabaseClientJavaScript"]
+        ),
         .library(name: "DatabaseClientHTTP", targets: ["DatabaseClientHTTP"]),
         .library(name: "DatabaseClientWebSocket", targets: ["DatabaseClientWebSocket"]),
     ],
     dependencies: [
         .package(path: "../database-kit"),
+        .package(
+            url: "https://github.com/1amageek/database-types.git",
+            branch: "main"
+        ),
         .package(url: "https://github.com/1amageek/JavaScriptKit.git", from: "0.57.0"),
     ],
     targets: [
         .target(
             name: "DatabaseClient",
             dependencies: [
-                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
             path: "Sources/DatabaseClient"
         ),
         .target(
-            name: "DatabaseClientWorker",
+            name: "DatabaseClientJavaScript",
             dependencies: [
                 "DatabaseClient",
-                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
                 .product(name: "JavaScriptKit", package: "JavaScriptKit"),
             ],
-            path: "Sources/WorkerClient"
+            path: "Sources/JavaScriptClient"
         ),
         .target(
             name: "DatabaseClientWebSocket",
             dependencies: [
                 "DatabaseClient",
-                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
             path: "Sources/WebSocketClient"
@@ -61,7 +68,7 @@ let package = Package(
             name: "DatabaseClientHTTP",
             dependencies: [
                 "DatabaseClient",
-                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
             path: "Sources/HTTPClient"
@@ -70,7 +77,7 @@ let package = Package(
             name: "DatabaseClientTests",
             dependencies: [
                 "DatabaseClient",
-                .product(name: "DatabaseValue", package: "database-kit"),
+                .product(name: "DatabaseTypes", package: "database-types"),
                 .target(name: "DatabaseClientHTTP", condition: .when(platforms: hostPlatforms)),
                 .target(name: "DatabaseClientWebSocket", condition: .when(platforms: hostPlatforms)),
                 .product(name: "DatabaseWire", package: "database-kit"),

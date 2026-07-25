@@ -1,8 +1,8 @@
 #if !os(WASI)
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 
-struct HTTPResponseByteOwner: DatabaseByteOwner {
+struct HTTPResponseByteOwner: ByteStringOwner {
     let data: Data
 
     var count: Int {

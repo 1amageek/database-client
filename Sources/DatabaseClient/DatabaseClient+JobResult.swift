@@ -1,27 +1,20 @@
-import DatabaseValue
+import DatabaseTypes
 import DatabaseWire
 
 public extension DatabaseClient {
     /// Reads every immutable result page, verifies its canonical digest, and
     /// decodes the response associated with the exact job descriptor.
-    func jobResult<Job: DatabaseJobDescriptor>(
-        for job: DatabaseJobIdentity,
-        as descriptor: Job.Type = Job.self,
-        metadata: DatabaseRequestMetadata = DatabaseRequestMetadata()
-    ) async throws(DatabaseClientError) -> Job.Response {
-        _ = descriptor
-        let descriptorOperation: DatabaseJobOperationIdentifier
-        do {
-            descriptorOperation = try Job.jobOperationIdentifier()
-        } catch let error {
-            throw .call(.wire(error))
-        }
-        guard job.operation == descriptorOperation else {
+    func jobResult<Request: Sendable, Response: Sendable>(
+        for job: JobIdentity,
+        using operation: JobOperation<Request, Response>,
+        metadata: OperationRequestMetadata = OperationRequestMetadata()
+    ) async throws(DatabaseClientError) -> Response {
+        guard job.operation == operation.identifier else {
             throw .jobResult(
                 .mismatchedJob(
-                    expected: DatabaseJobIdentity(
+                    expected: JobIdentity(
                         jobID: job.jobID,
-                        operation: descriptorOperation
+                        operation: operation.identifier
                     ),
                     actual: job
                 )
@@ -29,17 +22,17 @@ public extension DatabaseClient {
         }
         var continuation: JobResultOperation.Continuation?
         var expectedTotalByteCount: UInt64?
-        var expectedDigest: DatabaseJobResultDigest?
+        var expectedDigest: JobResultDigest?
         var expectedContinuationIndex: UInt32 = 1
         var receivedByteCount: UInt64 = 0
         var responseBytes: [UInt8] = []
-        var digestAccumulator = DatabaseJobResultDigestAccumulator(
+        var digestAccumulator = JobResultDigestAccumulator(
             operation: job.operation
         )
 
         repeat {
             let result = try await execute(
-                JobResultOperation.self,
+                DatabaseOperations.jobResult,
                 request: JobResultOperation.Request(
                     job: job,
                     continuation: continuation
@@ -223,21 +216,23 @@ public extension DatabaseClient {
             )
         }
 
-        switch DatabaseEnvelopeCodec.decodeResult(
-                Job.Response.self,
-                from: DatabaseBytes(responseBytes),
+        do {
+            // ByteString retains the Array's copy-on-write storage. This moves
+            // the completed payload across the decoding boundary without a
+            // second materialization of the response bytes.
+            let completedResponse = ByteString(responseBytes)
+            return try operation.decodeCompletedResponse(
+                completedResponse,
                 limits: limits
-            ) {
-        case .success(let response):
-            return response
-        case .failure(let error):
+            )
+        } catch let error {
             throw .jobResult(.responseDecode(error))
         }
     }
 
     private func validateJobResultIdentity(
-        _ actual: DatabaseJobIdentity,
-        expected: DatabaseJobIdentity
+        _ actual: JobIdentity,
+        expected: JobIdentity
     ) throws(DatabaseClientError) {
         guard actual == expected else {
             throw .jobResult(

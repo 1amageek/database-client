@@ -3,7 +3,7 @@
 import FoundationNetworking
 #endif
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 import Synchronization
 
@@ -15,7 +15,7 @@ final class HTTPDatabaseResponseCoordinator:
         var body = HTTPDatabaseResponseBody()
         var response: URLResponse?
         var continuation:
-            CheckedContinuation<(DatabaseBytes, URLResponse), any Error>?
+            CheckedContinuation<(ByteString, URLResponse), any Error>?
         var task: URLSessionDataTask?
         var cancellationRequested = false
     }
@@ -29,7 +29,7 @@ final class HTTPDatabaseResponseCoordinator:
 
     private struct Completion: Sendable {
         let continuation:
-            CheckedContinuation<(DatabaseBytes, URLResponse), any Error>
+            CheckedContinuation<(ByteString, URLResponse), any Error>
         let body: HTTPDatabaseResponseBody
         let response: URLResponse?
     }
@@ -37,7 +37,7 @@ final class HTTPDatabaseResponseCoordinator:
     private enum RequestActivation {
         case resume(URLSessionDataTask)
         case complete(
-            CheckedContinuation<(DatabaseBytes, URLResponse), any Error>,
+            CheckedContinuation<(ByteString, URLResponse), any Error>,
             any Error
         )
     }
@@ -73,7 +73,7 @@ final class HTTPDatabaseResponseCoordinator:
         for request: URLRequest,
         requestID: UInt64,
         session: URLSession
-    ) async throws -> (DatabaseBytes, URLResponse) {
+    ) async throws -> (ByteString, URLResponse) {
         try await withCheckedThrowingContinuation { continuation in
             let activation = state.withLock { state -> RequestActivation in
                 guard !state.isInvalidated,
@@ -110,7 +110,7 @@ final class HTTPDatabaseResponseCoordinator:
     func cancelRequest(_ requestID: UInt64) {
         let cancellation = state.withLock { state -> (
             URLSessionDataTask?,
-            CheckedContinuation<(DatabaseBytes, URLResponse), any Error>?
+            CheckedContinuation<(ByteString, URLResponse), any Error>?
         ) in
             guard var lifecycle = state.requests[requestID] else {
                 return (nil, nil)

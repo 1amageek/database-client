@@ -33,7 +33,8 @@ public struct HTTPDatabaseConfiguration: Sendable {
         guard !databaseID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw .emptyDatabaseID
         }
-        guard requestTimeout > 0 else {
+        guard requestTimeout.isFinite,
+              requestTimeout > 0 else {
             throw .invalidRequestTimeout
         }
         guard maximumRequestBytes > 0 else {

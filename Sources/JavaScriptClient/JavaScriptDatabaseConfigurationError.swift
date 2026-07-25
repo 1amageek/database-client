@@ -1,5 +1,5 @@
 #if os(WASI)
-public enum WorkerDatabaseConfigurationError:
+public enum JavaScriptDatabaseConfigurationError:
     Error,
     Sendable,
     Equatable {

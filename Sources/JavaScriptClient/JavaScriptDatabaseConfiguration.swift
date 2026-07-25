@@ -1,7 +1,7 @@
 #if os(WASI)
 import DatabaseWire
 
-public struct WorkerDatabaseConfiguration: Sendable, Hashable {
+public struct JavaScriptDatabaseConfiguration: Sendable, Hashable {
     public let requestEntrypointName: String
     public let requestTimeoutMilliseconds: UInt32
     public let maximumRequestBytes: Int
@@ -12,7 +12,7 @@ public struct WorkerDatabaseConfiguration: Sendable, Hashable {
         requestTimeoutMilliseconds: UInt32 = 25_000,
         maximumRequestBytes: Int = DatabaseWireLimits.default.maximumFrameBytes,
         maximumResponseBytes: Int = DatabaseWireLimits.default.maximumFrameBytes
-    ) throws(WorkerDatabaseConfigurationError) {
+    ) throws(JavaScriptDatabaseConfigurationError) {
         guard !requestEntrypointName.isEmpty else {
             throw .emptyRequestEntrypointName
         }
@@ -31,7 +31,7 @@ public struct WorkerDatabaseConfiguration: Sendable, Hashable {
         self.maximumResponseBytes = maximumResponseBytes
     }
 
-    public static let `default` = WorkerDatabaseConfiguration(
+    public static let `default` = JavaScriptDatabaseConfiguration(
         validatedRequestEntrypointName: "__databaseExecute",
         requestTimeoutMilliseconds: 25_000,
         maximumRequestBytes: DatabaseWireLimits.default.maximumFrameBytes,

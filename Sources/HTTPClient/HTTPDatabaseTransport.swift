@@ -1,6 +1,6 @@
 #if !os(WASI)
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 
 #if canImport(FoundationNetworking)
@@ -23,8 +23,8 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
     }
 
     public func send(
-        _ request: DatabaseBytes
-    ) async throws(DatabaseTransportError) -> DatabaseBytes {
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString {
         guard request.count <= configuration.maximumRequestBytes else {
             throw .rejected(
                 code: "request_too_large",
@@ -37,7 +37,7 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
             timeoutInterval: configuration.requestTimeout
         )
         urlRequest.httpMethod = "POST"
-        // URLRequest owns Data and cannot retain a DatabaseBytes synchronous borrow.
+        // URLRequest owns Data and cannot retain a ByteString synchronous borrow.
         // This is the single ownership copy at the Foundation request boundary.
         urlRequest.httpBody = request.withUnsafeBytes { bytes in
             Data(bytes)
@@ -53,7 +53,7 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
             urlRequest.setValue(workspaceID, forHTTPHeaderField: "x-workspace-id")
         }
 
-        let responseBytes: DatabaseBytes
+        let responseBytes: ByteString
         let urlResponse: URLResponse
         do {
             (responseBytes, urlResponse) = try await session.data(

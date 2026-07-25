@@ -1,16 +1,19 @@
-public import DatabaseValue
+public import DatabaseTypes
 public import DatabaseWire
 
-public struct DatabaseCall<Operation: DatabaseOperation>: Sendable {
+public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
+    public let operation: DatabaseOperation<Request, Response>
     public let requestID: UInt64
-    public let metadata: DatabaseRequestMetadata
-    public let request: Operation.Request
+    public let metadata: OperationRequestMetadata
+    public let request: Request
 
     public init(
+        operation: DatabaseOperation<Request, Response>,
         requestID: UInt64,
-        metadata: DatabaseRequestMetadata = DatabaseRequestMetadata(),
-        request: Operation.Request
+        metadata: OperationRequestMetadata = OperationRequestMetadata(),
+        request: Request
     ) {
+        self.operation = operation
         self.requestID = requestID
         self.metadata = metadata
         self.request = request
@@ -18,14 +21,13 @@ public struct DatabaseCall<Operation: DatabaseOperation>: Sendable {
 
     public func encode(
         limits: DatabaseWireLimits = .default
-    ) throws(DatabaseCallError) -> DatabaseBytes {
+    ) throws(DatabaseCallError) -> ByteString {
         do {
-            return try DatabaseEnvelopeCodec.encodeRequest(
-                Operation.self,
+            return try DatabaseWireEncoder(limits: limits).encodeRequest(
+                operation,
                 requestID: requestID,
                 metadata: metadata,
                 request: request,
-                limits: limits
             )
         } catch let error {
             throw .wire(error)
@@ -33,36 +35,24 @@ public struct DatabaseCall<Operation: DatabaseOperation>: Sendable {
     }
 
     public func decodeResponse(
-        _ bytes: DatabaseBytes,
+        _ bytes: ByteString,
         limits: DatabaseWireLimits = .default
-    ) throws(DatabaseCallError) -> Operation.Response {
-        let envelope: DatabaseWireResponseEnvelope
+    ) throws(DatabaseCallError) -> Response {
+        let result: Result<Response, RemoteOperationError>
         do {
-            envelope = try DatabaseEnvelopeCodec.decodeResponse(bytes, limits: limits)
+            result = try DatabaseWireDecoder(limits: limits).decodeResponse(
+                operation,
+                from: bytes,
+                matching: requestID
+            )
         } catch let error {
             throw .wire(error)
         }
-
-        guard envelope.requestID == requestID else {
-            throw .mismatchedRequestID(expected: requestID, actual: envelope.requestID)
-        }
-        guard envelope.operation == Operation.identifier else {
-            throw .mismatchedOperation(expected: Operation.identifier, actual: envelope.operation)
-        }
-
-        switch envelope.payload {
+        switch result {
+        case .success(let response):
+            return response
         case .failure(let error):
             throw .remote(error)
-        case .success(let payload):
-            do {
-                return try DatabaseEnvelopeCodec.decode(
-                    Operation.Response.self,
-                    from: payload,
-                    limits: limits
-                )
-            } catch let error {
-                throw .wire(error)
-            }
         }
     }
 }

@@ -1,7 +1,7 @@
 #if os(WASI)
 import JavaScriptKit
 
-actor DatabaseRequestDeadline {
+actor JavaScriptRequestDeadline {
     private var timer: JSTimer?
     private var isCancelled = false
 

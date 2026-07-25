@@ -3,7 +3,7 @@
 import FoundationNetworking
 #endif
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 
 final class HTTPDatabaseSession: Sendable {
@@ -27,7 +27,7 @@ final class HTTPDatabaseSession: Sendable {
 
     func data(
         for request: URLRequest
-    ) async throws -> (DatabaseBytes, URLResponse) {
+    ) async throws -> (ByteString, URLResponse) {
         let requestID = try responseCoordinator.reserveRequest()
         return try await withTaskCancellationHandler {
             try await responseCoordinator.response(

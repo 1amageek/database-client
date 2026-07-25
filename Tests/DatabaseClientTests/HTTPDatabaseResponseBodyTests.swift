@@ -1,5 +1,5 @@
 #if !os(WASI)
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 @testable import DatabaseClientHTTP
 import Testing
@@ -17,10 +17,6 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(accepted)
         let bytes = body.assembleBytes()
 
-        guard case .owner = bytes.sharedStorage else {
-            Issue.record("Expected owner-backed response bytes")
-            return
-        }
         #expect(try address(of: bytes) == address(of: data))
         #expect(bytes.count == data.count)
         #expect(bytes.first == 0xa5)
@@ -36,11 +32,7 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(acceptedSecond)
         let bytes = body.assembleBytes()
 
-        guard case .array(let storage, let range) = bytes.sharedStorage else {
-            Issue.record("Expected one consolidated array allocation")
-            return
-        }
-        #expect(range == storage.indices)
+        #expect(bytes.withUnsafeBytes { $0.count } == 5)
         #expect(bytes == [1, 2, 3, 4, 5])
     }
 
@@ -57,7 +49,17 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(body.assembleBytes() == [1, 2])
     }
 
-    private func address(of bytes: DatabaseBytes) throws -> UInt {
+    @Test("empty chunks do not consume fragment storage")
+    func emptyChunkDoesNotConsumeFragmentStorage() {
+        var body = HTTPDatabaseResponseBody()
+
+        let accepted = body.append(Data(), maximumBytes: 2)
+        #expect(accepted)
+        #expect(body.byteCount == 0)
+        #expect(body.fragments.isEmpty)
+    }
+
+    private func address(of bytes: ByteString) throws -> UInt {
         try #require(bytes.withUnsafeBytes { buffer in
             buffer.baseAddress.map { UInt(bitPattern: $0) }
         })

@@ -1,7 +1,7 @@
 #if !os(WASI)
 import DatabaseClient
 @testable import DatabaseClientWebSocket
-import DatabaseValue
+import DatabaseTypes
 import DatabaseWire
 import Foundation
 import Testing
@@ -10,9 +10,10 @@ import Testing
 struct WebSocketDatabaseTransportTests {
     @Test("request and response traverse the injected connection")
     func requestAndResponseTraverseConnection() async throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 41,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let requestBytes = try call.encode()
         let responseBytes = try successResponse(requestID: 41)
@@ -89,15 +90,20 @@ struct WebSocketDatabaseTransportTests {
     func routingDoesNotDecodeRequestPayload() async throws {
         let payloadByteCount = DatabaseWireLimits.default.maximumFrameBytes
         let limits = try largeFrameLimits(payloadByteCount: payloadByteCount)
-        let requestBytes = try DatabaseEnvelopeCodec.encode(
-            request: DatabaseWireRequestEnvelope(
-                requestID: 47,
-                operation: .queryExecute,
-                payload: DatabaseBytes(
-                    [UInt8](repeating: 0xa5, count: payloadByteCount)
-                )
-            ),
+        let requestBytes = try DatabaseWireEncoder(
             limits: limits
+        ).encodeRequest(
+            DatabaseOperations.queryExecute,
+            requestID: 47,
+            request: QueryExecuteOperation.Request(
+                input: .text(
+                    language: .sql,
+                    statement: String(
+                        repeating: "a",
+                        count: payloadByteCount
+                    )
+                )
+            )
         )
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [
@@ -125,17 +131,24 @@ struct WebSocketDatabaseTransportTests {
     func routingDoesNotDecodeResponsePayload() async throws {
         let payloadByteCount = DatabaseWireLimits.default.maximumFrameBytes
         let limits = try largeFrameLimits(payloadByteCount: payloadByteCount)
-        let responseBytes = try DatabaseEnvelopeCodec.encode(
-            response: DatabaseWireResponseEnvelope(
-                requestID: 48,
-                operation: .capabilitiesDescribe,
-                payload: .success(
-                    DatabaseBytes(
-                        [UInt8](repeating: 0x5a, count: payloadByteCount)
-                    )
-                )
-            ),
+        let responseBytes = try DatabaseWireEncoder(
             limits: limits
+        ).encodeResponse(
+            DatabaseOperations.capabilitiesDescribe,
+            requestID: 48,
+            response: CapabilitiesDescribeOperation.Response(
+                runtimeVersion: "1",
+                features: [
+                    .init(
+                        identifier: String(
+                            repeating: "f",
+                            count: payloadByteCount
+                        ),
+                        version: 1
+                    ),
+                ],
+                jobOperations: []
+            )
         )
         let responseData = Data(responseBytes)
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -149,9 +162,10 @@ struct WebSocketDatabaseTransportTests {
                 connection: connection
             )
         )
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 48,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
 
         let received = try await transport.send(call.encode())
@@ -163,9 +177,10 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("oversized response fails every pending request")
     func oversizedResponseIsRejected() async throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 42,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let response = Data(try successResponse(requestID: 42))
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -190,9 +205,10 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("text response is rejected")
     func textResponseIsRejected() async throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 43,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [.string("invalid")]
@@ -232,9 +248,10 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("response wait is bounded by the configured request timeout")
     func responseWaitTimesOut() async throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 44,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [],
@@ -255,13 +272,15 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("a late cancelled response cannot fail another pending request")
     func lateCancelledResponseIsIsolated() async throws {
-        let firstCall = DatabaseCall<CapabilitiesDescribeOperation>(
+        let firstCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 45,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
-        let secondCall = DatabaseCall<CapabilitiesDescribeOperation>(
+        let secondCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 46,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [],
@@ -301,9 +320,10 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("a cancelled request ID cannot be reused before its late response")
     func cancelledRequestIDCannotBeReused() async throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 49,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [],
@@ -374,9 +394,10 @@ struct WebSocketDatabaseTransportTests {
             connector: connector
         )
 
-        let firstCall = DatabaseCall<CapabilitiesDescribeOperation>(
+        let firstCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 50,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let firstRequest = Task {
             try await transport.send(firstCall.encode())
@@ -387,9 +408,10 @@ struct WebSocketDatabaseTransportTests {
             try await firstRequest.value
         }
 
-        let secondCall = DatabaseCall<CapabilitiesDescribeOperation>(
+        let secondCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 51,
-            request: DatabaseEmpty()
+            request: EmptyOperationPayload()
         )
         let secondRequest = Task {
             try await transport.send(secondCall.encode())
@@ -442,9 +464,11 @@ struct WebSocketDatabaseTransportTests {
 
     private func successResponse(
         requestID: UInt64
-    ) throws -> DatabaseBytes {
-        let payload = try DatabaseEnvelopeCodec.encode(
-            CapabilitiesDescribeOperation.Response(
+    ) throws -> ByteString {
+        return try DatabaseWireEncoder().encodeResponse(
+            DatabaseOperations.capabilitiesDescribe,
+            requestID: requestID,
+            response: CapabilitiesDescribeOperation.Response(
                 runtimeVersion: "v1",
                 features: [
                     CapabilitiesDescribeOperation.Feature(
@@ -455,13 +479,6 @@ struct WebSocketDatabaseTransportTests {
                 jobOperations: []
             )
         )
-        return try DatabaseEnvelopeCodec.encode(
-            response: DatabaseWireResponseEnvelope(
-                requestID: requestID,
-                operation: .capabilitiesDescribe,
-                payload: .success(payload)
-            )
-        )
     }
 
     private func largeFrameLimits(
@@ -469,15 +486,15 @@ struct WebSocketDatabaseTransportTests {
     ) throws -> DatabaseWireLimits {
         try DatabaseWireLimits(
             maximumFrameBytes: payloadByteCount + 1_024,
-            maximumStringBytes: 1_024,
-            maximumByteStringBytes: payloadByteCount,
+            maximumStringBytes: payloadByteCount,
+            maximumByteStringBytes: payloadByteCount + 1_024,
             maximumCollectionCount: 1_024,
             maximumNestingDepth: 64,
             maximumObjectCount: 1_024
         )
     }
 
-    private func address(of bytes: DatabaseBytes) throws -> UInt {
+    private func address(of bytes: ByteString) throws -> UInt {
         try #require(bytes.withUnsafeBytes { buffer in
             buffer.baseAddress.map { UInt(bitPattern: $0) }
         })

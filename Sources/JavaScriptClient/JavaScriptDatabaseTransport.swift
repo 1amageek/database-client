@@ -1,20 +1,20 @@
 #if os(WASI)
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import JavaScriptKit
 
-public struct WorkerDatabaseTransport: DatabaseTransport {
-    public let configuration: WorkerDatabaseConfiguration
+public struct JavaScriptDatabaseTransport: DatabaseTransport {
+    public let configuration: JavaScriptDatabaseConfiguration
 
     public nonisolated init(
-        configuration: WorkerDatabaseConfiguration = .default
+        configuration: JavaScriptDatabaseConfiguration = .default
     ) {
         self.configuration = configuration
     }
 
     public func send(
-        _ request: DatabaseBytes
-    ) async throws(DatabaseTransportError) -> DatabaseBytes {
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString {
         guard request.count <= configuration.maximumRequestBytes else {
             throw .rejected(
                 code: "request_too_large",
@@ -41,7 +41,7 @@ public struct WorkerDatabaseTransport: DatabaseTransport {
                 "Database request entrypoint did not return a Promise"
             )
         }
-        let pendingRequest = PendingDatabaseRequest(
+        let pendingRequest = PendingJavaScriptRequest(
             timeoutMilliseconds: configuration.requestTimeoutMilliseconds,
             maximumResponseBytes: configuration.maximumResponseBytes
         )

@@ -1,17 +1,17 @@
 #if os(WASI)
 import DatabaseClient
-import DatabaseValue
+import DatabaseTypes
 import JavaScriptKit
 import Synchronization
 
-final class PendingDatabaseRequest: Sendable {
+final class PendingJavaScriptRequest: Sendable {
     private struct State {
         var continuation: CheckedContinuation<
-            Result<DatabaseBytes, DatabaseTransportError>,
+            Result<ByteString, DatabaseTransportError>,
             Never
         >?
-        var unclaimedResult: Result<DatabaseBytes, DatabaseTransportError>?
-        var deadline: DatabaseRequestDeadline?
+        var unclaimedResult: Result<ByteString, DatabaseTransportError>?
+        var deadline: JavaScriptRequestDeadline?
         var isCompleted = false
     }
 
@@ -29,7 +29,7 @@ final class PendingDatabaseRequest: Sendable {
 
     func wait(
         for responsePromise: JSPromise
-    ) async -> Result<DatabaseBytes, DatabaseTransportError> {
+    ) async -> Result<ByteString, DatabaseTransportError> {
         await observe(for: responsePromise)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -43,7 +43,7 @@ final class PendingDatabaseRequest: Sendable {
     private func observe(
         for responsePromise: JSPromise
     ) async {
-        let deadline = DatabaseRequestDeadline()
+        let deadline = JavaScriptRequestDeadline()
         await deadline.schedule(
             afterMilliseconds: timeoutMilliseconds
         ) {
@@ -79,12 +79,12 @@ final class PendingDatabaseRequest: Sendable {
 
     private func attachResponseContinuation(
         _ continuation: CheckedContinuation<
-            Result<DatabaseBytes, DatabaseTransportError>,
+            Result<ByteString, DatabaseTransportError>,
             Never
         >
     ) {
         let unclaimedResult = state.withLock { state
-            -> Result<DatabaseBytes, DatabaseTransportError>? in
+            -> Result<ByteString, DatabaseTransportError>? in
             if let result = state.unclaimedResult {
                 state.unclaimedResult = nil
                 return result
@@ -98,15 +98,15 @@ final class PendingDatabaseRequest: Sendable {
     }
 
     private func complete(
-        with result: Result<DatabaseBytes, DatabaseTransportError>
+        with result: Result<ByteString, DatabaseTransportError>
     ) {
         let completion = state.withLock { state
             -> (
                 CheckedContinuation<
-                    Result<DatabaseBytes, DatabaseTransportError>,
+                    Result<ByteString, DatabaseTransportError>,
                     Never
                 >?,
-                DatabaseRequestDeadline?
+                JavaScriptRequestDeadline?
             )? in
             guard !state.isCompleted else {
                 return nil
@@ -137,7 +137,7 @@ final class PendingDatabaseRequest: Sendable {
     private static func decodeResponse(
         _ value: JSValue,
         maximumResponseBytes: Int
-    ) -> Result<DatabaseBytes, DatabaseTransportError> {
+    ) -> Result<ByteString, DatabaseTransportError> {
         guard let responseArray = JSUint8Array(from: value) else {
             return .failure(
                 .invalidResponse(
@@ -153,9 +153,9 @@ final class PendingDatabaseRequest: Sendable {
             )
         }
         // JavaScript memory cannot be adopted by Swift. Copy directly into the
-        // final DatabaseBytes allocation from the exact Uint8Array view without
+        // final ByteString allocation from the exact Uint8Array view without
         // an intermediate Swift array or retaining its backing ArrayBuffer.
-        let response = DatabaseBytes.copying(
+        let response = ByteString.copying(
             count: responseArray.length
         ) { bytes in
             responseArray.copyMemory(

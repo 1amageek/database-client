@@ -94,6 +94,24 @@ struct HTTPDatabaseTransportTests {
         }
     }
 
+    @Test("configuration rejects non-finite request timeouts")
+    func configurationRejectsNonFiniteRequestTimeouts() {
+        #expect(throws: HTTPDatabaseConfigurationError.invalidRequestTimeout) {
+            _ = try HTTPDatabaseConfiguration(
+                endpoint: URL(string: "https://database.example.test")!,
+                accessToken: "token",
+                requestTimeout: .infinity
+            )
+        }
+        #expect(throws: HTTPDatabaseConfigurationError.invalidRequestTimeout) {
+            _ = try HTTPDatabaseConfiguration(
+                endpoint: URL(string: "https://database.example.test")!,
+                accessToken: "token",
+                requestTimeout: .nan
+            )
+        }
+    }
+
     @Test("transport rejects oversized requests before starting URL loading")
     func transportRejectsOversizedRequestBeforeLoading() async throws {
         let invoked = Mutex(false)

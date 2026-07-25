@@ -1,9 +1,9 @@
 #if !os(WASI)
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 
 /// Keeps a received Foundation data frame alive while DatabaseWire borrows it.
-struct ReceivedWebSocketFrameByteOwner: DatabaseByteOwner {
+struct ReceivedWebSocketFrameByteOwner: ByteStringOwner {
     let data: Data
 
     var count: Int {

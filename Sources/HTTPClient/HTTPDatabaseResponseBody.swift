@@ -1,5 +1,5 @@
 #if !os(WASI)
-import DatabaseValue
+import DatabaseTypes
 import Foundation
 
 struct HTTPDatabaseResponseBody: Sendable {
@@ -10,6 +10,9 @@ struct HTTPDatabaseResponseBody: Sendable {
         _ fragment: Data,
         maximumBytes: Int
     ) -> Bool {
+        guard !fragment.isEmpty else {
+            return true
+        }
         guard fragment.count <= maximumBytes,
               byteCount <= maximumBytes - fragment.count else {
             return false
@@ -19,16 +22,16 @@ struct HTTPDatabaseResponseBody: Sendable {
         return true
     }
 
-    func assembleBytes() -> DatabaseBytes {
+    func assembleBytes() -> ByteString {
         switch fragments.count {
         case 0:
             return []
         case 1:
-            return DatabaseBytes(
+            return ByteString(
                 retaining: HTTPResponseByteOwner(data: fragments[0])
             )
         default:
-            return DatabaseBytes.copying(count: byteCount) { destination in
+            return ByteString.copying(count: byteCount) { destination in
                 var offset = 0
                 for fragment in fragments {
                     fragment.withUnsafeBytes { source in

@@ -23,8 +23,10 @@
 ## Concurrency, Data, and Error Contracts
 
 - The Embedded request identifier source uses `Atomic<UInt64>`, starts at one,
-  never wraps, and reports exhaustion. Embedded code does not depend on
-  `Mutex`.
+  never wraps, and reports exhaustion.
+- JavaScript request-completion correlation uses one `Mutex<State>` in the
+  shared implementation. It never holds the mutex across `await`, JavaScript
+  calls, timer cancellation, or continuation resumption.
 - A platform adapter may use a mutex only for short request-correlation state
   when that platform provides it. Never hold it across `await` or transport
   I/O.

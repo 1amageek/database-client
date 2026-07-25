@@ -1,6 +1,7 @@
 public enum DatabaseClientError: Error, Sendable, Equatable {
+    case requestIdentifierExhausted
     case transport(DatabaseTransportError)
     case call(DatabaseCallError)
-    case jobLifecycle(DatabaseJobLifecycleError)
-    case jobResult(DatabaseJobResultError)
+    case jobLifecycle(JobLifecycleError)
+    case jobResult(JobResultError)
 }

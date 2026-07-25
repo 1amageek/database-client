@@ -1,21 +1,21 @@
 public import DatabaseWire
 
-public enum DatabaseJobResultError: Error, Sendable, Equatable {
+public enum JobResultError: Error, Sendable, Equatable {
     case mismatchedJob(
-        expected: DatabaseJobIdentity,
-        actual: DatabaseJobIdentity
+        expected: JobIdentity,
+        actual: JobIdentity
     )
-    case failed(DatabaseRemoteError)
-    case cancelled(DatabaseJobIdentity)
+    case failed(RemoteOperationError)
+    case cancelled(JobIdentity)
     case responseTooLarge(actual: UInt64, maximum: Int)
     case totalByteCountChanged(expected: UInt64, actual: UInt64)
     case digestChanged(
-        expected: DatabaseJobResultDigest,
-        actual: DatabaseJobResultDigest
+        expected: JobResultDigest,
+        actual: JobResultDigest
     )
     case invalidContinuationJob(
-        expected: DatabaseJobIdentity,
-        actual: DatabaseJobIdentity
+        expected: JobIdentity,
+        actual: JobIdentity
     )
     case invalidContinuationDigest
     case invalidContinuationIndex(expected: UInt32, actual: UInt32)
@@ -23,8 +23,8 @@ public enum DatabaseJobResultError: Error, Sendable, Equatable {
     case byteCountExceeded(expected: UInt64, actual: UInt64)
     case incompleteByteCount(expected: UInt64, actual: UInt64)
     case digestMismatch(
-        expected: DatabaseJobResultDigest,
-        actual: DatabaseJobResultDigest
+        expected: JobResultDigest,
+        actual: JobResultDigest
     )
     case responseDecode(DatabaseWireError)
 }

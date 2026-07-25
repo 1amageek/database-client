@@ -1,60 +1,47 @@
-import DatabaseClient
-import DatabaseValue
+@testable import DatabaseClient
+import DatabaseTypes
 import DatabaseWire
 import Synchronization
 import Testing
 
 @Suite("DatabaseClient")
 struct DatabaseClientTests {
-    @Test("typed calls encode operation metadata and decode the matching response")
+    @Test("typed calls encode metadata and decode the matching response")
     func typedCallRoundTrips() async throws {
         let capturedIDs = Mutex<[UInt64]>([])
-        let transport = ScriptedDatabaseTransport { bytes throws(DatabaseTransportError) in
-            let request = try decodeRequest(bytes)
+        let transport = ScriptedDatabaseTransport {
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperations.capabilitiesDescribe,
+                from: bytes
+            )
             capturedIDs.withLock { $0.append(request.requestID) }
-            #expect(request.operation == .capabilitiesDescribe)
-            if request.requestID == 41 {
+            if request.requestID == 1 {
                 #expect(request.metadata.traceID == "trace-a")
             } else {
                 #expect(request.metadata.traceID == nil)
             }
-
-            let payload = try encodeWire(
-                CapabilitiesDescribeOperation.Response(
-                    runtimeVersion: "26.0716.0",
-                    features: [
-                        CapabilitiesDescribeOperation.Feature(
-                            identifier: "graph.sparql",
-                            version: 1
-                        ),
-                    ],
-                    jobOperations: []
-                )
-            )
-            return try encodeWire(
-                response: DatabaseWireResponseEnvelope(
-                    requestID: request.requestID,
-                    operation: request.operation,
-                    payload: .success(payload)
-                )
+            return try encodeResponse(
+                DatabaseOperations.capabilitiesDescribe,
+                requestID: request.requestID,
+                response: capabilitiesResponse()
             )
         }
-        let client = DatabaseClient(transport: transport, firstRequestID: 41)
+        let client = DatabaseClient(transport: transport)
 
         let first = try await client.execute(
-            CapabilitiesDescribeOperation.self,
-            request: DatabaseEmpty(),
-            metadata: DatabaseRequestMetadata(traceID: "trace-a")
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload(),
+            metadata: OperationRequestMetadata(traceID: "trace-a")
         )
         let second = try await client.execute(
-            CapabilitiesDescribeOperation.self,
-            request: DatabaseEmpty()
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload()
         )
 
-        #expect(first.runtimeVersion == "26.0716.0")
-        #expect(first.features.first?.identifier == "graph.sparql")
-        #expect(second == first)
-        #expect(capturedIDs.withLock { $0 } == [41, 42])
+        #expect(first.runtimeVersion == "1")
+        #expect(second.runtimeVersion == "1")
+        #expect(capturedIDs.withLock { $0 } == [1, 2])
     }
 
     @Test("concurrent calls reserve unique identifiers without serializing transport I/O")
@@ -62,62 +49,85 @@ struct DatabaseClientTests {
         let barrier = ConcurrentCallBarrier(participantCount: 2)
         let capturedIDs = Mutex<[UInt64]>([])
         let transport = ScriptedDatabaseTransport {
-            requestBytes throws(DatabaseTransportError) in
-            let request = try decodeRequest(requestBytes)
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperations.capabilitiesDescribe,
+                from: bytes
+            )
             capturedIDs.withLock { $0.append(request.requestID) }
             await barrier.arrive()
-            let payload = try encodeWire(
-                CapabilitiesDescribeOperation.Response(
-                    runtimeVersion: "1",
-                    features: [],
-                    jobOperations: []
-                )
-            )
-            return try encodeWire(
-                response: DatabaseWireResponseEnvelope(
-                    requestID: request.requestID,
-                    operation: request.operation,
-                    payload: .success(payload)
-                )
+            return try encodeResponse(
+                DatabaseOperations.capabilitiesDescribe,
+                requestID: request.requestID,
+                response: capabilitiesResponse()
             )
         }
-        let client = DatabaseClient(
-            transport: transport,
-            firstRequestID: 100
-        )
+        let client = DatabaseClient(transport: transport)
 
         async let first = client.execute(
-            CapabilitiesDescribeOperation.self,
-            request: DatabaseEmpty()
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload()
         )
         async let second = client.execute(
-            CapabilitiesDescribeOperation.self,
-            request: DatabaseEmpty()
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload()
         )
         let responses = try await [first, second]
 
         #expect(responses.allSatisfy { $0.runtimeVersion == "1" })
-        #expect(capturedIDs.withLock { $0.sorted() } == [100, 101])
+        #expect(capturedIDs.withLock { $0.sorted() } == [1, 2])
     }
 
-    @Test("a remote failure remains typed")
+    @Test("request identifier exhaustion is a typed client failure")
+    func requestIdentifierExhaustionIsTyped() async throws {
+        let transport = ScriptedDatabaseTransport {
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperations.capabilitiesDescribe,
+                from: bytes
+            )
+            return try encodeResponse(
+                DatabaseOperations.capabilitiesDescribe,
+                requestID: request.requestID,
+                response: capabilitiesResponse()
+            )
+        }
+        let client = DatabaseClient(
+            transport: transport,
+            firstRequestID: UInt64.max
+        )
+
+        _ = try await client.execute(
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload()
+        )
+        await #expect(throws: DatabaseClientError.requestIdentifierExhausted) {
+            _ = try await client.execute(
+                DatabaseOperations.capabilitiesDescribe,
+                request: EmptyOperationPayload()
+            )
+        }
+    }
+
+    @Test("remote failures remain typed")
     func remoteFailureRemainsTyped() throws {
-        let remoteError = DatabaseRemoteError(
+        let remoteError = RemoteOperationError(
             category: .authorization,
             code: "admin_required",
             message: "This operation requires the admin boundary",
             retryability: .never
         )
-        let call = DatabaseCall<MaintenanceExecuteOperation>(
+        let call = DatabaseCall(
+            operation: DatabaseOperations.maintenanceExecute,
             requestID: 1,
-            request: MaintenanceExecuteOperation.Request(invocation: .compact)
-        )
-        let response = try DatabaseEnvelopeCodec.encode(
-            response: DatabaseWireResponseEnvelope(
-                requestID: 1,
-                operation: .maintenanceExecute,
-                payload: .failure(remoteError)
+            request: MaintenanceExecuteOperation.Request(
+                invocation: .compact
             )
+        )
+        let response = try DatabaseWireEncoder().encodeFailure(
+            requestID: 1,
+            operation: .maintenanceExecute,
+            error: remoteError
         )
 
         #expect(throws: DatabaseCallError.remote(remoteError)) {
@@ -125,78 +135,122 @@ struct DatabaseClientTests {
         }
     }
 
-    @Test("typed job lifecycle preserves the exact job identity")
-    func typedJobLifecyclePreservesIdentity() async throws {
-        let job = DatabaseJobIdentity(
-            jobID: DatabaseUUID(high: 0x1111, low: 0x2222),
-            operation: try CapabilitiesSnapshotJob.jobOperationIdentifier()
+    @Test("transport failures remain distinct from call failures")
+    func transportFailureRemainsTyped() async {
+        let transport = ScriptedDatabaseTransport {
+            _ throws(DatabaseTransportError) in
+            throw DatabaseTransportError.timeout
+        }
+        let client = DatabaseClient(transport: transport)
+
+        await #expect(
+            throws: DatabaseClientError.transport(.timeout)
+        ) {
+            _ = try await client.execute(
+                DatabaseOperations.capabilitiesDescribe,
+                request: EmptyOperationPayload()
+            )
+        }
+    }
+
+    @Test("response correlation rejects a mismatched request identifier")
+    func responseCorrelationRejectsMismatch() throws {
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 8,
+            request: EmptyOperationPayload()
         )
-        let statusPayload = try encodeWire(
-            try JobStatusOperation.Response(
-                state: .running,
-                job: job,
-                completedWorkUnits: 3,
-                totalWorkUnits: 9,
-                executionCount: 1,
-                currentSliceAttempt: 1,
-                updatedAt: DatabaseTimestamp(
-                    secondsSinceUnixEpoch: 1_700_000_000
-                )
+        let response = try encodeResponse(
+            DatabaseOperations.capabilitiesDescribe,
+            requestID: 9,
+            response: capabilitiesResponse()
+        )
+
+        #expect(
+            throws: DatabaseCallError.wire(
+                .unexpectedRequestIdentifier(expected: 8, actual: 9)
+            )
+        ) {
+            _ = try call.decodeResponse(response)
+        }
+    }
+
+    @Test("job lifecycle preserves the exact job identity")
+    func jobLifecyclePreservesIdentity() async throws {
+        let jobOperation = JobOperations.maintenance
+        let job = JobIdentity(
+            jobID: UUID(high: 0x1111, low: 0x2222),
+            operation: jobOperation.identifier
+        )
+        let statusResponse = try JobStatusOperation.Response(
+            state: .running,
+            job: job,
+            completedWorkUnits: 3,
+            totalWorkUnits: 9,
+            executionCount: 1,
+            currentSliceAttempt: 1,
+            updatedAt: try Timestamp(
+                secondsSinceUnixEpoch: 1_700_000_000
             )
         )
-        let cancellationPayload = try encodeWire(
-            try JobCancelOperation.Response(
-                job: job,
-                state: .committingUnsuccessfulOutcome,
-                accepted: true
-            )
+        let cancellationResponse = try JobCancelOperation.Response(
+            job: job,
+            state: .committingUnsuccessfulOutcome,
+            accepted: true
         )
         let observedOperations = Mutex<[DatabaseOperationIdentifier]>([])
         let transport = ScriptedDatabaseTransport {
-            requestBytes throws(DatabaseTransportError) in
-            let envelope = try decodeRequest(requestBytes)
+            bytes throws(DatabaseTransportError) in
+            let envelope = try decodeEnvelope(bytes)
             observedOperations.withLock { $0.append(envelope.operation) }
-            let responsePayload: DatabaseBytes
             switch envelope.operation {
             case .jobStart:
-                let request = try decodeWire(
-                    DatabaseTypedJobStartRequest<CapabilitiesSnapshotJob>.self,
-                    from: envelope.payload
+                let request = try decodeRequest(
+                    DatabaseOperations.jobStart,
+                    from: bytes
                 )
-                #expect(request.maximumSliceWorkUnits == 17)
-                responsePayload = try encodeWire(
-                    JobStartOperation.Response(job: job)
+                #expect(request.request.maximumSliceWorkUnits == 17)
+                #expect(request.request.operation == jobOperation.identifier)
+                return try encodeResponse(
+                    DatabaseOperations.jobStart,
+                    requestID: request.requestID,
+                    response: JobStartOperation.Response(job: job)
                 )
             case .jobStatus:
-                let request = try decodeWire(
-                    JobStatusOperation.Request.self,
-                    from: envelope.payload
+                let request = try decodeRequest(
+                    DatabaseOperations.jobStatus,
+                    from: bytes
                 )
-                #expect(request.job == job)
-                responsePayload = statusPayload
+                #expect(request.request.job == job)
+                return try encodeResponse(
+                    DatabaseOperations.jobStatus,
+                    requestID: request.requestID,
+                    response: statusResponse
+                )
             case .jobCancel:
-                let request = try decodeWire(
-                    JobCancelOperation.Request.self,
-                    from: envelope.payload
+                let request = try decodeRequest(
+                    DatabaseOperations.jobCancel,
+                    from: bytes
                 )
-                #expect(request.job == job)
-                responsePayload = cancellationPayload
+                #expect(request.request.job == job)
+                return try encodeResponse(
+                    DatabaseOperations.jobCancel,
+                    requestID: request.requestID,
+                    response: cancellationResponse
+                )
             default:
-                throw .invalidResponse("Unexpected job lifecycle operation")
-            }
-            return try encodeWire(
-                response: DatabaseWireResponseEnvelope(
-                    requestID: envelope.requestID,
-                    operation: envelope.operation,
-                    payload: .success(responsePayload)
+                throw .invalidResponse(
+                    "Unexpected job lifecycle operation"
                 )
-            )
+            }
         }
         let client = DatabaseClient(transport: transport)
 
         let started = try await client.startJob(
-            CapabilitiesSnapshotJob.self,
-            request: DatabaseEmpty(),
+            jobOperation,
+            request: MaintenanceExecuteOperation.Request(
+                invocation: .compact
+            ),
             maximumSliceWorkUnits: 17
         )
         let status = try await client.jobStatus(for: started)
@@ -213,97 +267,66 @@ struct DatabaseClientTests {
         )
     }
 
-    @Test("response correlation rejects a mismatched request ID")
-    func responseCorrelationRejectsMismatch() throws {
-        let call = DatabaseCall<CapabilitiesDescribeOperation>(
-            requestID: 8,
-            request: DatabaseEmpty()
-        )
-        let responsePayload = try DatabaseEnvelopeCodec.encode(
-            CapabilitiesDescribeOperation.Response(
-                runtimeVersion: "1",
-                features: [],
-                jobOperations: []
-            )
-        )
-        let response = try DatabaseEnvelopeCodec.encode(
-            response: DatabaseWireResponseEnvelope(
-                requestID: 9,
-                operation: .capabilitiesDescribe,
-                payload: .success(responsePayload)
-            )
-        )
-
-        #expect(throws: DatabaseCallError.mismatchedRequestID(expected: 8, actual: 9)) {
-            _ = try call.decodeResponse(response)
-        }
-    }
-
     @Test("paged job results verify integrity and decode the original response")
     func pagedJobResultDecodesOriginalResponse() async throws {
-        let job = DatabaseJobIdentity(
-            jobID: DatabaseUUID(high: 0x1020, low: 0x3040),
-            operation: try CapabilitiesSnapshotJob.jobOperationIdentifier()
+        let jobOperation = JobOperations.maintenance
+        let job = JobIdentity(
+            jobID: UUID(high: 0x1020, low: 0x3040),
+            operation: jobOperation.identifier
         )
-        let originalResponse = CapabilitiesDescribeOperation.Response(
-            runtimeVersion: "1.0.0",
-            features: [
-                .init(identifier: "graph.sparql", version: 1),
-                .init(identifier: "graph.shacl", version: 1),
-            ],
-            jobOperations: []
+        let originalResponse = MaintenanceExecuteOperation.Response.execution(
+            MaintenanceExecuteOperation.ExecutionResult(
+                kind: .compaction,
+                completedWorkUnits: 9,
+                commitVersion: 42,
+                isComplete: true
+            )
         )
-        let payload = try DatabaseEnvelopeCodec.encode(originalResponse)
+        let payload = try DatabaseWireEncoder()
+            .encodeResponseAndPayload(
+                DatabaseOperations.maintenanceExecute,
+                requestID: 0,
+                response: originalResponse
+            )
+            .payload
         let boundaries = [0, 3, payload.count / 2, payload.count]
         let pages = (0..<(boundaries.count - 1)).map { index in
-            payload.slice(boundaries[index]..<boundaries[index + 1])
+            let lowerBound = payload.startIndex + boundaries[index]
+            let upperBound = payload.startIndex + boundaries[index + 1]
+            return payload[lowerBound..<upperBound]
         }
-        var accumulator = DatabaseJobResultDigestAccumulator(
+        var accumulator = JobResultDigestAccumulator(
             operation: job.operation
         )
         accumulator.update(payload)
         let digest = accumulator.finalize()
         let capturedRequestIDs = Mutex<[UInt64]>([])
         let transport = ScriptedDatabaseTransport {
-            requestBytes throws(DatabaseTransportError) in
-            let envelope = try decodeRequest(requestBytes)
-            capturedRequestIDs.withLock { $0.append(envelope.requestID) }
-            guard envelope.operation == .jobResult else {
-                throw DatabaseTransportError.invalidResponse("Expected job.result")
-            }
-            let request: JobResultOperation.Request = try decodeWire(
-                JobResultOperation.Request.self,
-                from: envelope.payload
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperations.jobResult,
+                from: bytes
             )
-            guard request.job == job else {
-                throw DatabaseTransportError.invalidResponse(
-                    "Unexpected job identifier"
-                )
+            capturedRequestIDs.withLock { $0.append(request.requestID) }
+            guard request.request.job == job else {
+                throw .invalidResponse("Unexpected job identifier")
             }
-            let pageIndex = Int(request.continuation?.nextChunkIndex ?? 0)
+            let pageIndex = Int(
+                request.request.continuation?.nextChunkIndex ?? 0
+            )
             guard pageIndex < pages.count else {
-                throw DatabaseTransportError.invalidResponse(
-                    "Unexpected result page"
+                throw .invalidResponse("Unexpected result page")
+            }
+            let continuation = pageIndex + 1 < pages.count
+                ? try makeContinuation(
+                    job: job,
+                    responseDigest: digest,
+                    nextChunkIndex: UInt32(pageIndex + 1)
                 )
-            }
-            let continuation: JobResultOperation.Continuation?
-            if pageIndex + 1 < pages.count {
-                do {
-                    continuation = try JobResultOperation.Continuation(
-                        job: job,
-                        responseDigest: digest,
-                        nextChunkIndex: UInt32(pageIndex + 1)
-                    )
-                } catch {
-                    throw DatabaseTransportError.invalidResponse(
-                        String(describing: error)
-                    )
-                }
-            } else {
-                continuation = nil
-            }
-            return try encodeJobResultResponse(
-                request: envelope,
+                : nil
+            return try encodeResponse(
+                DatabaseOperations.jobResult,
+                requestID: request.requestID,
                 response: .succeeded(
                     job: job,
                     responsePayloadPage: pages[pageIndex],
@@ -313,41 +336,57 @@ struct DatabaseClientTests {
                 )
             )
         }
-        let client = DatabaseClient(
-            transport: transport,
-            firstRequestID: 0
-        )
+        let client = DatabaseClient(transport: transport)
 
         let decoded = try await client.jobResult(
             for: job,
-            as: CapabilitiesSnapshotJob.self
+            using: jobOperation
         )
 
-        #expect(decoded == originalResponse)
-        #expect(capturedRequestIDs.withLock { $0 } == [0, 1, 2])
+        guard case .execution(let result) = decoded else {
+            Issue.record("Expected a maintenance execution result")
+            return
+        }
+        #expect(result.kind == .compaction)
+        #expect(result.completedWorkUnits == 9)
+        #expect(result.commitVersion == 42)
+        #expect(result.isComplete)
+        #expect(capturedRequestIDs.withLock { $0 } == [1, 2, 3])
     }
 
-    @Test("paged job results reject a payload with a mismatched digest")
+    @Test("paged job results reject a mismatched digest")
     func pagedJobResultRejectsDigestMismatch() async throws {
-        let job = DatabaseJobIdentity(
-            jobID: DatabaseUUID(high: 0x5060, low: 0x7080),
-            operation: try CapabilitiesSnapshotJob.jobOperationIdentifier()
+        let jobOperation = JobOperations.maintenance
+        let job = JobIdentity(
+            jobID: UUID(high: 0x5060, low: 0x7080),
+            operation: jobOperation.identifier
         )
-        let payload = try DatabaseEnvelopeCodec.encode(
-            CapabilitiesDescribeOperation.Response(
-                runtimeVersion: "1.0.0",
-                features: [],
-                jobOperations: []
+        let originalResponse = MaintenanceExecuteOperation.Response.execution(
+            MaintenanceExecuteOperation.ExecutionResult(
+                kind: .compaction,
+                completedWorkUnits: 1,
+                isComplete: true
             )
         )
-        let incorrectDigest = try DatabaseJobResultDigest(
-            [UInt8](repeating: 0, count: DatabaseJobResultDigest.byteCount)
+        let payload = try DatabaseWireEncoder()
+            .encodeResponseAndPayload(
+                DatabaseOperations.maintenanceExecute,
+                requestID: 0,
+                response: originalResponse
+            )
+            .payload
+        let incorrectDigest = try JobResultDigest(
+            [UInt8](repeating: 0, count: JobResultDigest.byteCount)
         )
         let transport = ScriptedDatabaseTransport {
-            requestBytes throws(DatabaseTransportError) in
-            let envelope = try decodeRequest(requestBytes)
-            return try encodeJobResultResponse(
-                request: envelope,
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperations.jobResult,
+                from: bytes
+            )
+            return try encodeResponse(
+                DatabaseOperations.jobResult,
+                requestID: request.requestID,
                 response: .succeeded(
                     job: job,
                     responsePayloadPage: payload,
@@ -358,7 +397,7 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
-        var actualDigestAccumulator = DatabaseJobResultDigestAccumulator(
+        var actualDigestAccumulator = JobResultDigestAccumulator(
             operation: job.operation
         )
         actualDigestAccumulator.update(payload)
@@ -374,35 +413,28 @@ struct DatabaseClientTests {
         ) {
             _ = try await client.jobResult(
                 for: job,
-                as: CapabilitiesSnapshotJob.self
+                using: jobOperation
             )
         }
     }
 }
 
-private struct CapabilitiesSnapshotJob: DatabaseJobDescriptor {
-    typealias Request = DatabaseEmpty
-    typealias Response = CapabilitiesDescribeOperation.Response
-
-    static func jobOperationIdentifier()
-        throws(DatabaseWireError) -> DatabaseJobOperationIdentifier {
-        try DatabaseJobOperationIdentifier(
-            family: .commandRead,
-            kind: "capabilities.snapshot"
-        )
-    }
-}
-
 private struct ScriptedDatabaseTransport: DatabaseTransport {
-    let responseProvider: @Sendable (DatabaseBytes) async throws(DatabaseTransportError) -> DatabaseBytes
+    let responseProvider:
+        @Sendable (ByteString)
+            async throws(DatabaseTransportError) -> ByteString
 
     init(
-        responseProvider: @escaping @Sendable (DatabaseBytes) async throws(DatabaseTransportError) -> DatabaseBytes
+        responseProvider:
+            @escaping @Sendable (ByteString)
+                async throws(DatabaseTransportError) -> ByteString
     ) {
         self.responseProvider = responseProvider
     }
 
-    func send(_ request: DatabaseBytes) async throws(DatabaseTransportError) -> DatabaseBytes {
+    func send(
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString {
         try await responseProvider(request)
     }
 }
@@ -433,58 +465,69 @@ private actor ConcurrentCallBarrier {
     }
 }
 
-private func decodeRequest(
-    _ bytes: DatabaseBytes
+private func capabilitiesResponse()
+    -> CapabilitiesDescribeOperation.Response {
+    CapabilitiesDescribeOperation.Response(
+        runtimeVersion: "1",
+        features: [
+            .init(identifier: "graph.sparql", version: 1),
+        ],
+        jobOperations: []
+    )
+}
+
+private func decodeEnvelope(
+    _ bytes: ByteString
 ) throws(DatabaseTransportError) -> DatabaseWireRequestEnvelope {
     do {
-        return try DatabaseEnvelopeCodec.decodeRequest(bytes)
-    } catch {
+        return try DatabaseWireDecoder().decodeRequestEnvelope(bytes)
+    } catch let error {
         throw .invalidResponse(String(describing: error))
     }
 }
 
-private func encodeWire<Value: DatabaseWireValue>(
-    _ value: Value
-) throws(DatabaseTransportError) -> DatabaseBytes {
+private func decodeRequest<Request: Sendable, Response: Sendable>(
+    _ operation: DatabaseOperation<Request, Response>,
+    from bytes: ByteString
+) throws(DatabaseTransportError) -> DecodedOperationRequest<Request> {
     do {
-        return try DatabaseEnvelopeCodec.encode(value)
-    } catch {
-        throw .invalidResponse(String(describing: error))
-    }
-}
-
-private func encodeWire(
-    response: DatabaseWireResponseEnvelope
-) throws(DatabaseTransportError) -> DatabaseBytes {
-    do {
-        return try DatabaseEnvelopeCodec.encode(response: response)
-    } catch {
-        throw .invalidResponse(String(describing: error))
-    }
-}
-
-private func decodeWire<Value: DatabaseWireValue>(
-    _ type: Value.Type,
-    from bytes: DatabaseBytes
-) throws(DatabaseTransportError) -> Value {
-    switch DatabaseEnvelopeCodec.decodeResult(type, from: bytes) {
-    case .success(let value):
-        return value
-    case .failure(let error):
-        throw .invalidResponse(String(describing: error))
-    }
-}
-
-private func encodeJobResultResponse(
-    request: DatabaseWireRequestEnvelope,
-    response: JobResultOperation.Response
-) throws(DatabaseTransportError) -> DatabaseBytes {
-    let payload = try encodeWire(response)
-    return try encodeWire(
-        response: DatabaseWireResponseEnvelope(
-            requestID: request.requestID,
-            operation: .jobResult,
-            payload: .success(payload)
+        return try DatabaseWireDecoder().decodeRequest(
+            operation,
+            from: bytes
         )
-    )
+    } catch let error {
+        throw .invalidResponse(String(describing: error))
+    }
+}
+
+private func encodeResponse<Request: Sendable, Response: Sendable>(
+    _ operation: DatabaseOperation<Request, Response>,
+    requestID: UInt64,
+    response: Response
+) throws(DatabaseTransportError) -> ByteString {
+    do {
+        return try DatabaseWireEncoder().encodeResponse(
+            operation,
+            requestID: requestID,
+            response: response
+        )
+    } catch let error {
+        throw .invalidResponse(String(describing: error))
+    }
+}
+
+private func makeContinuation(
+    job: JobIdentity,
+    responseDigest: JobResultDigest,
+    nextChunkIndex: UInt32
+) throws(DatabaseTransportError) -> JobResultOperation.Continuation {
+    do {
+        return try JobResultOperation.Continuation(
+            job: job,
+            responseDigest: responseDigest,
+            nextChunkIndex: nextChunkIndex
+        )
+    } catch let error {
+        throw .invalidResponse(String(describing: error))
+    }
 }

@@ -1,28 +1,33 @@
 import DatabaseWire
 
 public extension DatabaseClient {
-    func startJob<Job: DatabaseJobDescriptor>(
-        _ job: Job.Type = Job.self,
-        request: Job.Request,
+    func startJob<Request: Sendable, Response: Sendable>(
+        _ job: JobOperation<Request, Response>,
+        request: Request,
         maximumSliceWorkUnits: UInt64 = 100_000,
         retryPolicy: JobStartOperation.RetryPolicy = .init(),
-        metadata: DatabaseRequestMetadata = DatabaseRequestMetadata()
-    ) async throws(DatabaseClientError) -> DatabaseJobIdentity {
-        _ = job
-        let expectedOperation = try expectedJobOperation(Job.self)
-        let response = try await execute(
-            DatabaseTypedJobStartOperation<Job>.self,
-            request: DatabaseTypedJobStartRequest(
-                request: request,
+        metadata: OperationRequestMetadata = OperationRequestMetadata()
+    ) async throws(DatabaseClientError) -> JobIdentity {
+        let startRequest: JobStartOperation.Request
+        do {
+            startRequest = try job.makeStartRequest(
+                request,
                 maximumSliceWorkUnits: maximumSliceWorkUnits,
-                retryPolicy: retryPolicy
-            ),
+                retryPolicy: retryPolicy,
+                limits: limits
+            )
+        } catch let error {
+            throw .call(.wire(error))
+        }
+        let response = try await execute(
+            DatabaseOperations.jobStart,
+            request: startRequest,
             metadata: metadata
         )
-        guard response.operation == expectedOperation else {
+        guard response.operation == job.identifier else {
             throw .jobLifecycle(
                 .mismatchedOperation(
-                    expected: expectedOperation,
+                    expected: job.identifier,
                     actual: response.operation
                 )
             )
@@ -31,11 +36,11 @@ public extension DatabaseClient {
     }
 
     func jobStatus(
-        for job: DatabaseJobIdentity,
-        metadata: DatabaseRequestMetadata = DatabaseRequestMetadata()
+        for job: JobIdentity,
+        metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> JobStatusOperation.Response {
         let response = try await execute(
-            JobStatusOperation.self,
+            DatabaseOperations.jobStatus,
             request: JobStatusOperation.Request(job: job),
             metadata: metadata
         )
@@ -44,11 +49,11 @@ public extension DatabaseClient {
     }
 
     func cancelJob(
-        _ job: DatabaseJobIdentity,
-        metadata: DatabaseRequestMetadata = DatabaseRequestMetadata()
+        _ job: JobIdentity,
+        metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> JobCancelOperation.Response {
         let response = try await execute(
-            JobCancelOperation.self,
+            DatabaseOperations.jobCancel,
             request: JobCancelOperation.Request(job: job),
             metadata: metadata
         )
@@ -56,20 +61,9 @@ public extension DatabaseClient {
         return response
     }
 
-    private func expectedJobOperation<Job: DatabaseJobDescriptor>(
-        _ job: Job.Type
-    ) throws(DatabaseClientError) -> DatabaseJobOperationIdentifier {
-        _ = job
-        do {
-            return try Job.jobOperationIdentifier()
-        } catch let error {
-            throw .call(.wire(error))
-        }
-    }
-
     private func validateJobIdentity(
-        _ actual: DatabaseJobIdentity,
-        expected: DatabaseJobIdentity
+        _ actual: JobIdentity,
+        expected: JobIdentity
     ) throws(DatabaseClientError) {
         guard actual == expected else {
             throw .jobLifecycle(
