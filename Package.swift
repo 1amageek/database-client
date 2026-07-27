@@ -29,10 +29,13 @@ let package = Package(
         .library(name: "DatabaseClientWebSocket", targets: ["DatabaseClientWebSocket"]),
     ],
     dependencies: [
-        .package(path: "../database-kit"),
+        .package(
+            url: "https://github.com/1amageek/database-kit.git",
+            from: "26.0727.1"
+        ),
         .package(
             url: "https://github.com/1amageek/database-types.git",
-            branch: "main"
+            from: "26.0726.0"
         ),
         .package(url: "https://github.com/1amageek/JavaScriptKit.git", from: "0.57.0"),
     ],

@@ -144,8 +144,8 @@ Pin the compiler and SDK to the same Swift snapshot. For the currently validated
 The same command with `--product DatabaseClientJavaScript` verifies the
 JavaScript transport inside a true Embedded WebAssembly build.
 
-## Development dependency
+## Versioned dependencies
 
-During the coordinated multi-repository replacement, `Package.swift` references the adjacent
-`../database-kit` checkout. The release step replaces this path with the canonical release tag
-after `database-kit` and its golden vectors are published.
+`Package.swift` resolves `database-kit` and `database-types` from their published
+release tags. A checkout of another database repository next to this package is
+not part of the build contract.
