@@ -31,11 +31,11 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.0728.0"
+            from: "26.0728.1"
         ),
         .package(
             url: "https://github.com/1amageek/database-types.git",
-            from: "26.0728.0"
+            from: "26.0728.2"
         ),
         .package(url: "https://github.com/1amageek/JavaScriptKit.git", from: "0.57.0"),
     ],

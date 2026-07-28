@@ -1,13 +1,13 @@
 {
-  "originHash" : "359f51508a4780b5c5dce2caa873f4813f86aa32fb174fb3878e570035988922",
+  "originHash" : "8f79b05062f19074a22f72981997c11f269eee834c44283a38fb5963bbadb6b4",
   "pins" : [
     {
       "identity" : "database-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/database-kit.git",
       "state" : {
-        "revision" : "2923b27a601754d2802b0dd2d5ac32e26be2b061",
-        "version" : "26.728.0"
+        "revision" : "9aa9a7ff291ba967412307ed33d21b70c9c79e43",
+        "version" : "26.728.1"
       }
     },
     {
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/database-types.git",
       "state" : {
-        "revision" : "3baa1b3662d36510123a344bb6e076bb39982f08",
-        "version" : "26.728.0"
+        "revision" : "0d88ffda8afe260bf05c781c020f6da5e2227285",
+        "version" : "26.728.2"
       }
     },
     {

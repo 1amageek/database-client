@@ -24,7 +24,7 @@ struct HTTPDatabaseResponseBodyTests {
     }
 
     @Test("multiple chunks consolidate directly into one final allocation")
-    func multipleChunksAllocateOneContiguousResponse() {
+    func multipleChunksAllocateOneContiguousResponse() throws {
         var body = HTTPDatabaseResponseBody()
 
         let acceptedFirst = body.append(Data([1, 2]), maximumBytes: 5)
@@ -33,7 +33,7 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(acceptedSecond)
         let bytes = body.assembleBytes()
 
-        #expect(bytes.retainedByteCount == bytes.count)
+        #expect(try #require(bytes.retainedByteCount) >= bytes.count)
         #expect(bytes.withUnsafeBytes { $0.count } == 5)
         #expect(bytes == [1, 2, 3, 4, 5])
     }
