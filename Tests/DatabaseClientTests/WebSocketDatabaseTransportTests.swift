@@ -38,6 +38,7 @@ struct WebSocketDatabaseTransportTests {
         #expect(request.value(forHTTPHeaderField: "x-database-id") == "calendar")
         #expect(try call.decodeResponse(response).runtimeVersion == "v1")
         #expect(try address(of: response) == address(of: responseData))
+        #expect(response.retainedByteCount == nil)
         await transport.shutdown()
     }
 
@@ -172,6 +173,7 @@ struct WebSocketDatabaseTransportTests {
 
         #expect(received.count == responseBytes.count)
         #expect(try address(of: received) == address(of: responseData))
+        #expect(received.retainedByteCount == nil)
         await transport.shutdown()
     }
 

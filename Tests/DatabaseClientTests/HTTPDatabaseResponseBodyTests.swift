@@ -18,6 +18,7 @@ struct HTTPDatabaseResponseBodyTests {
         let bytes = body.assembleBytes()
 
         #expect(try address(of: bytes) == address(of: data))
+        #expect(bytes.retainedByteCount == nil)
         #expect(bytes.count == data.count)
         #expect(bytes.first == 0xa5)
     }
@@ -32,6 +33,7 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(acceptedSecond)
         let bytes = body.assembleBytes()
 
+        #expect(bytes.retainedByteCount == bytes.count)
         #expect(bytes.withUnsafeBytes { $0.count } == 5)
         #expect(bytes == [1, 2, 3, 4, 5])
     }
