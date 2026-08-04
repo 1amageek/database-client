@@ -52,7 +52,6 @@ public actor HTTPDatabaseTransport: DatabaseTransport {
         if let workspaceID = configuration.workspaceID {
             urlRequest.setValue(workspaceID, forHTTPHeaderField: "x-workspace-id")
         }
-
         let responseBytes: ByteString
         let urlResponse: URLResponse
         do {
