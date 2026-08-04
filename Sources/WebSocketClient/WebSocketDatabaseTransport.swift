@@ -16,6 +16,9 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     private var nextConnectionID: UInt64 = 1
     private var pending: [DatabaseRequestKey: PendingRequest] = [:]
     private var retiredRequestIDs: RetiredDatabaseRequestIDs
+    private var isShutdown = false
+    private var isShutdownComplete = false
+    private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         configuration: WebSocketDatabaseConfiguration,
@@ -32,6 +35,9 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     public func send(
         _ request: ByteString
     ) async throws(DatabaseTransportError) -> ByteString {
+        guard !isShutdown else {
+            throw .unavailable("WebSocket database transport is shut down")
+        }
         guard request.count <= configuration.maximumRequestBytes else {
             throw .rejected(
                 code: "request_too_large",
@@ -64,17 +70,18 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
 
         let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                registerPendingRequest(
-                    requestKey: requestKey,
-                    continuation: continuation
-                )
-                Task {
+                let frameTransmission = Task {
                     await self.sendFrame(
                         request,
                         requestKey: requestKey,
                         over: activeConnection.connection
                     )
                 }
+                registerPendingRequest(
+                    requestKey: requestKey,
+                    continuation: continuation,
+                    frameTransmission: frameTransmission
+                )
             }
         } onCancel: {
             Task { await self.cancelRequest(requestKey) }
@@ -83,14 +90,39 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
     }
 
     public func shutdown() async {
-        responseReception?.cancel()
+        if isShutdown {
+            guard !isShutdownComplete else {
+                return
+            }
+            await withCheckedContinuation { continuation in
+                shutdownWaiters.append(continuation)
+            }
+            return
+        }
+        isShutdown = true
+        let reception = responseReception
         responseReception = nil
+        reception?.cancel()
         let activeConnection = connection
         connection = nil
-        failAllPending(with: DatabaseTransportError.cancelled)
+        let childTasks = cancelAllPending(
+            with: DatabaseTransportError.cancelled
+        )
         retiredRequestIDs.removeAll()
         if let activeConnection {
             await activeConnection.connection.cancel()
+        }
+        for task in childTasks {
+            await task.value
+        }
+        if let reception {
+            await reception.value
+        }
+        isShutdownComplete = true
+        let waiters = shutdownWaiters
+        shutdownWaiters.removeAll(keepingCapacity: false)
+        for waiter in waiters {
+            waiter.resume()
         }
     }
 
@@ -132,6 +164,13 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         requestKey: DatabaseRequestKey,
         over connection: any DatabaseWebSocketConnection
     ) async {
+        guard !Task.isCancelled,
+            !isShutdown,
+            self.connection?.id == requestKey.connectionID,
+            pending[requestKey] != nil
+        else {
+            return
+        }
         do {
             // URLSessionWebSocketTask owns Data beyond the synchronous borrow.
             // This is the single ownership copy at the Foundation send boundary.
@@ -192,6 +231,9 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
                     )
                 }
                 request.timeoutTask.cancel()
+                request.frameTransmission.cancel()
+                await request.frameTransmission.value
+                await request.timeoutTask.value
                 request.continuation.resume(returning: .success(bytes))
             }
         } catch is CancellationError {
@@ -210,7 +252,8 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         await failRequest(
             requestKey,
             with: DatabaseTransportError.cancelled,
-            retainCompletion: true
+            retainCompletion: true,
+            waitsForFrameTransmission: true
         )
     }
 
@@ -218,7 +261,8 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         await failRequest(
             requestKey,
             with: DatabaseTransportError.timeout,
-            retainCompletion: true
+            retainCompletion: true,
+            waitsForFrameTransmission: true
         )
     }
 
@@ -227,7 +271,8 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         continuation: CheckedContinuation<
             Result<ByteString, DatabaseTransportError>,
             Never
-        >
+        >,
+        frameTransmission: Task<Void, Never>
     ) {
         let requestTimeout = configuration.requestTimeout
         let timeoutTask = Task {
@@ -240,19 +285,22 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         }
         pending[requestKey] = PendingRequest(
             continuation: continuation,
-            timeoutTask: timeoutTask
+            timeoutTask: timeoutTask,
+            frameTransmission: frameTransmission
         )
     }
 
     private func failRequest(
         _ requestKey: DatabaseRequestKey,
         with error: DatabaseTransportError,
-        retainCompletion: Bool = false
+        retainCompletion: Bool = false,
+        waitsForFrameTransmission: Bool = false
     ) async {
         guard let request = pending.removeValue(forKey: requestKey) else {
             return
         }
         request.timeoutTask.cancel()
+        request.frameTransmission.cancel()
         if retainCompletion,
            let activeConnection = connection,
            activeConnection.id == requestKey.connectionID {
@@ -266,19 +314,33 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
                         message: "The active connection exhausted its late-response history"
                     )
                 )
+                if waitsForFrameTransmission {
+                    await request.frameTransmission.value
+                }
                 return
             }
+        }
+        if waitsForFrameTransmission {
+            await request.frameTransmission.value
         }
         request.continuation.resume(returning: .failure(error))
     }
 
-    private func failAllPending(with error: DatabaseTransportError) {
+    private func cancelAllPending(
+        with error: DatabaseTransportError
+    ) -> [Task<Void, Never>] {
         let requests = pending.values
         pending.removeAll(keepingCapacity: true)
+        var childTasks: [Task<Void, Never>] = []
+        childTasks.reserveCapacity(requests.count * 2)
         for request in requests {
             request.timeoutTask.cancel()
+            request.frameTransmission.cancel()
+            childTasks.append(request.timeoutTask)
+            childTasks.append(request.frameTransmission)
             request.continuation.resume(returning: .failure(error))
         }
+        return childTasks
     }
 
     private func closeConnection(
@@ -291,9 +353,12 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         responseReception?.cancel()
         responseReception = nil
         connection = nil
-        failAllPending(with: error)
+        let childTasks = cancelAllPending(with: error)
         retiredRequestIDs.removeAll()
         await activeConnection.connection.cancel()
+        for task in childTasks {
+            await task.value
+        }
     }
 
     private struct ActiveConnection: Sendable {
@@ -307,6 +372,7 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
             Never
         >
         let timeoutTask: Task<Void, Never>
+        let frameTransmission: Task<Void, Never>
     }
 }
 #endif

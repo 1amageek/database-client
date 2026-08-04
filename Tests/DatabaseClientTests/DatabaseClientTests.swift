@@ -137,11 +137,7 @@ struct DatabaseClientTests {
 
     @Test("transport failures remain distinct from call failures")
     func transportFailureRemainsTyped() async {
-        let transport = ScriptedDatabaseTransport {
-            _ throws(DatabaseTransportError) in
-            throw DatabaseTransportError.timeout
-        }
-        let client = DatabaseClient(transport: transport)
+        let client = DatabaseClient(transport: TimeoutDatabaseTransport())
 
         await #expect(
             throws: DatabaseClientError.transport(.timeout)
@@ -189,7 +185,7 @@ struct DatabaseClientTests {
             totalWorkUnits: 9,
             executionCount: 1,
             currentSliceAttempt: 1,
-            updatedAt: try Timestamp(
+            updatedAt: Timestamp(
                 secondsSinceUnixEpoch: 1_700_000_000
             )
         )
@@ -416,6 +412,14 @@ struct DatabaseClientTests {
                 using: jobOperation
             )
         }
+    }
+}
+
+private struct TimeoutDatabaseTransport: DatabaseTransport {
+    func send(
+        _ request: ByteString
+    ) async throws(DatabaseTransportError) -> ByteString {
+        throw .timeout
     }
 }
 

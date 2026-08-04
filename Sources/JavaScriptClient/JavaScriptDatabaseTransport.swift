@@ -34,9 +34,16 @@ public struct JavaScriptDatabaseTransport: DatabaseTransport {
         let requestPayload = request.withUnsafeBytes { bytes in
             JSUint8Array(buffer: bytes.bindMemory(to: UInt8.self))
         }
-        guard let responsePromise = JSPromise(
-            from: requestEntrypoint(requestPayload.jsValue)
-        ) else {
+        let responseValue: JSValue
+        do throws(JSException) {
+            responseValue = try requestEntrypoint.throws(requestPayload)
+        } catch {
+            throw .rejected(
+                code: "database_entrypoint_threw",
+                message: error.description
+            )
+        }
+        guard let responsePromise = JSPromise(from: responseValue) else {
             throw .invalidResponse(
                 "Database request entrypoint did not return a Promise"
             )

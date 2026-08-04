@@ -1,0 +1,121 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+readonly toolchain_identifier="org.swift.64202607231a"
+readonly default_swift_sdk="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm"
+readonly package_name="database-client"
+readonly expected_packaged_artifact="${package_name}PackageTests.xctest.wasm"
+readonly build_timeout_seconds="${JAVASCRIPT_TEST_BUILD_TIMEOUT_SECONDS:-240}"
+readonly test_timeout_seconds="${JAVASCRIPT_TEST_TIMEOUT_SECONDS:-120}"
+
+swift_sdk="${DATABASE_CLIENT_SWIFT_SDK:-${default_swift_sdk}}"
+expected_test_count=""
+filter=""
+
+usage() {
+    print -u2 "Usage: scripts/javascript-test-harness [--swift-sdk <id>] [--filter <pattern>] [--expected-tests <count>]"
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --swift-sdk)
+            (( $# >= 2 )) || { usage; exit 64; }
+            swift_sdk="$2"
+            shift 2
+            ;;
+        --filter)
+            (( $# >= 2 )) || { usage; exit 64; }
+            filter="$2"
+            shift 2
+            ;;
+        --expected-tests)
+            (( $# >= 2 )) || { usage; exit 64; }
+            expected_test_count="$2"
+            shift 2
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage
+            exit 64
+            ;;
+    esac
+done
+
+if [[ -n "${expected_test_count}" && ! "${expected_test_count}" =~ '^[0-9]+$' ]]; then
+    print -u2 "--expected-tests must be a non-negative integer"
+    exit 64
+fi
+
+readonly swift_executable="$(xcrun --toolchain "${toolchain_identifier}" --find swift)"
+readonly node_executable="$(command -v node)"
+readonly packaged_test_directory=".build/plugins/PackageToJS/outputs/PackageTests"
+readonly runner_path="Tests/JavaScriptRuntimeHarness/run.mjs"
+
+"${swift_executable}" --version
+"${node_executable}" --version
+print "Swift SDK: ${swift_sdk}"
+
+perl -e 'alarm shift; exec @ARGV' "${build_timeout_seconds}" \
+    "${swift_executable}" package \
+    --build-system native \
+    --disable-sandbox \
+    --swift-sdk "${swift_sdk}" \
+    js test \
+    --build-only
+
+[[ -f "${packaged_test_directory}/instantiate.js" ]] || {
+    print -u2 "PackageToJS did not create instantiate.js"
+    exit 1
+}
+[[ -f "${packaged_test_directory}/${expected_packaged_artifact}" ]] || {
+    print -u2 "PackageToJS did not create ${expected_packaged_artifact}"
+    exit 1
+}
+
+# PackageToJS 0.57.2 resolves SwiftPM's legacy native build layout correctly.
+# The default XCBuild layout is not yet classified correctly by this plugin.
+rg -F \
+    "export const MODULE_PATH = \"${expected_packaged_artifact}\";" \
+    "${packaged_test_directory}/instantiate.js" >/dev/null || {
+    print -u2 "PackageToJS selected an unexpected WebAssembly module"
+    exit 1
+}
+
+test_arguments=(--testing-library swift-testing)
+if [[ -n "${filter}" ]]; then
+    test_arguments+=(--filter "${filter}")
+fi
+
+output_path="$(mktemp -t database-client-javascript-tests).log"
+print "Test log: ${output_path}"
+set +e
+perl -e 'alarm shift; exec @ARGV' "${test_timeout_seconds}" \
+    "${node_executable}" "${runner_path}" \
+    "${packaged_test_directory}" \
+    "${test_arguments[@]}" 2>&1 | tee "${output_path}"
+test_status=${pipestatus[1]}
+set -e
+
+(( test_status == 0 )) || exit "${test_status}"
+
+passed_count="$(rg -c '^\u2714 Test \".*\" passed' "${output_path}" || true)"
+failed_count="$(rg -c '^\u2718 Test .* recorded an issue' "${output_path}" || true)"
+skipped_count="$(rg -c '^\u21b7 Test .* skipped' "${output_path}" || true)"
+passed_count="${passed_count:-0}"
+failed_count="${failed_count:-0}"
+skipped_count="${skipped_count:-0}"
+
+if [[ -n "${expected_test_count}" && "${passed_count}" != "${expected_test_count}" ]]; then
+    print -u2 "Expected ${expected_test_count} passed tests, observed ${passed_count}"
+    exit 1
+fi
+if (( failed_count != 0 || skipped_count != 0 )); then
+    print -u2 "Unexpected test results: ${failed_count} failed, ${skipped_count} skipped"
+    exit 1
+fi
+
+print "JavaScript runtime verification passed: ${passed_count} passed, 0 failed, 0 skipped"

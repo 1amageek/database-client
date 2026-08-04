@@ -272,6 +272,131 @@ struct WebSocketDatabaseTransportTests {
         await transport.shutdown()
     }
 
+    @Test("transport rejects requests after explicit shutdown")
+    func transportRejectsRequestsAfterShutdown() async throws {
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 53,
+            request: EmptyOperationPayload()
+        )
+        let connection = ScriptedDatabaseWebSocketConnection(messages: [])
+        let connector = CapturingDatabaseWebSocketConnector(
+            connection: connection
+        )
+        let transport = WebSocketDatabaseTransport(
+            configuration: try configuration(),
+            connector: connector
+        )
+
+        await transport.shutdown()
+
+        await #expect(
+            throws: DatabaseTransportError.unavailable(
+                "WebSocket database transport is shut down"
+            )
+        ) {
+            try await transport.send(call.encode())
+        }
+        #expect(connector.capturedRequest == nil)
+        await transport.shutdown()
+    }
+
+    @Test("shutdown cancels a pending request exactly once")
+    func shutdownCancelsPendingRequest() async throws {
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 54,
+            request: EmptyOperationPayload()
+        )
+        let connection = ScriptedDatabaseWebSocketConnection(
+            messages: [],
+            waitsWhenEmpty: true
+        )
+        let transport = WebSocketDatabaseTransport(
+            configuration: try configuration(),
+            connector: CapturingDatabaseWebSocketConnector(
+                connection: connection
+            )
+        )
+        let pendingRequest = Task {
+            try await transport.send(call.encode())
+        }
+        await connection.waitForFrameCount(1)
+
+        await transport.shutdown()
+
+        await #expect(throws: DatabaseTransportError.cancelled) {
+            try await pendingRequest.value
+        }
+        #expect(await connection.cancellationWasRequested())
+    }
+
+    @Test("shutdown cancels an in-flight frame transmission")
+    func shutdownCancelsInFlightFrameTransmission() async throws {
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 55,
+            request: EmptyOperationPayload()
+        )
+        let connection = ScriptedDatabaseWebSocketConnection(
+            messages: [],
+            waitsWhenEmpty: true,
+            waitsDuringSend: true
+        )
+        let transport = WebSocketDatabaseTransport(
+            configuration: try configuration(),
+            connector: CapturingDatabaseWebSocketConnector(
+                connection: connection
+            )
+        )
+        let pendingRequest = Task {
+            try await transport.send(call.encode())
+        }
+        await connection.waitForSendStart()
+
+        await transport.shutdown()
+
+        await #expect(throws: DatabaseTransportError.cancelled) {
+            try await pendingRequest.value
+        }
+        #expect(await connection.frames().isEmpty)
+        #expect(await connection.cancellationWasRequested())
+        #expect(await connection.childOperationsDidFinish())
+    }
+
+    @Test("concurrent shutdown callers wait for the same completed boundary")
+    func concurrentShutdownCallersWaitForCompletion() async throws {
+        let call = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 56,
+            request: EmptyOperationPayload()
+        )
+        let connection = ScriptedDatabaseWebSocketConnection(
+            messages: [],
+            waitsWhenEmpty: true,
+            waitsDuringSend: true
+        )
+        let transport = WebSocketDatabaseTransport(
+            configuration: try configuration(),
+            connector: CapturingDatabaseWebSocketConnector(
+                connection: connection
+            )
+        )
+        let pendingRequest = Task {
+            try await transport.send(call.encode())
+        }
+        await connection.waitForSendStart()
+
+        async let firstShutdown: Void = transport.shutdown()
+        async let secondShutdown: Void = transport.shutdown()
+        _ = await (firstShutdown, secondShutdown)
+
+        await #expect(throws: DatabaseTransportError.cancelled) {
+            try await pendingRequest.value
+        }
+        #expect(await connection.childOperationsDidFinish())
+    }
+
     @Test("a late cancelled response cannot fail another pending request")
     func lateCancelledResponseIsIsolated() async throws {
         let firstCall = DatabaseCall(
@@ -317,6 +442,59 @@ struct WebSocketDatabaseTransportTests {
 
         let response = try await activeRequest.value
         #expect(try secondCall.decodeResponse(response).runtimeVersion == "v1")
+        await transport.shutdown()
+    }
+
+    @Test("a late response is retired before cancellation joins the send task")
+    func lateResponseIsRetiredBeforeJoiningSendTask() async throws {
+        let cancelledCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 57,
+            request: EmptyOperationPayload()
+        )
+        let activeCall = DatabaseCall(
+            operation: DatabaseOperations.capabilitiesDescribe,
+            requestID: 58,
+            request: EmptyOperationPayload()
+        )
+        let connection = ScriptedDatabaseWebSocketConnection(
+            messages: [],
+            waitsWhenEmpty: true,
+            waitsAfterFirstSend: true,
+            releasesBlockedSendOnCancellation: false
+        )
+        let transport = WebSocketDatabaseTransport(
+            configuration: try configuration(requestTimeout: 1),
+            connector: CapturingDatabaseWebSocketConnector(
+                connection: connection
+            )
+        )
+
+        let cancelledRequest = Task {
+            try await transport.send(cancelledCall.encode())
+        }
+        await connection.waitForSendStart()
+        cancelledRequest.cancel()
+        await connection.waitForSendCancellation()
+
+        let activeRequest = Task {
+            try await transport.send(activeCall.encode())
+        }
+        await connection.waitForFrameCount(2)
+        await connection.append(
+            .data(Data(try successResponse(requestID: 57)))
+        )
+        await connection.append(
+            .data(Data(try successResponse(requestID: 58)))
+        )
+
+        let response = try await activeRequest.value
+        #expect(try activeCall.decodeResponse(response).runtimeVersion == "v1")
+        await connection.releaseBlockedSend()
+        await #expect(throws: DatabaseTransportError.cancelled) {
+            try await cancelledRequest.value
+        }
+        #expect(!(await connection.cancellationWasRequested()))
         await transport.shutdown()
     }
 

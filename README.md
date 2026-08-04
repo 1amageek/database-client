@@ -95,7 +95,15 @@ as a typed failure.
 preserve bytes exactly.
 The returned value may be an offset view. The transport copies exactly the view's
 `byteOffset..<byteOffset + byteLength` range once into Swift-owned storage; it never widens
-the response to the complete backing `ArrayBuffer`.
+the response to the complete backing `ArrayBuffer`. The bridge reads intrinsic
+TypedArray metadata rather than overridable JavaScript properties and rejects
+invalid, detached, oversized, or changing views as typed transport failures.
+
+Synchronous exceptions from the entrypoint are returned as
+`database_entrypoint_threw`; Promise rejection is returned as
+`database_entrypoint_rejected`. Timeout and task cancellation detach both
+Promise handlers before completing the Swift continuation, so a late settlement
+cannot decode bytes or retain the pending request.
 
 ```javascript
 globalThis.__databaseExecute = async (request) => {
@@ -128,7 +136,10 @@ let client = DatabaseClient(
 
 `WebSocketDatabaseTransport` keeps one WebSocket connection, correlates responses by
 the envelope request ID, and supports concurrent callers. Call `shutdown()` when the owning
-application stops.
+application stops. Shutdown rejects new sends, cancels the receive loop and all
+per-request send/timeout tasks, closes the connection, and does not return until
+those child tasks have completed. Concurrent shutdown callers join the same
+completion boundary.
 
 ## Embedded verification
 
@@ -146,6 +157,6 @@ JavaScript transport inside a true Embedded WebAssembly build.
 
 ## Versioned dependencies
 
-`Package.swift` resolves `database-kit` and `database-types` from their published
-release tags. A checkout of another database repository next to this package is
-not part of the build contract.
+`Package.swift` resolves `database-kit`, `database-types`, and JavaScriptKit from
+their published release tags. A checkout of another database repository next
+to this package is not part of the build contract.

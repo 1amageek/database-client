@@ -1,5 +1,5 @@
 {
-  "originHash" : "5767de3780f348c3db3e465a0db8b8af415fbfb31b347310c1504e3274e3dba6",
+  "originHash" : "0a6786d780ebfa74ffa0eba37c594b3e7211d6da7e6c10520f3a912afe892cb6",
   "pins" : [
     {
       "identity" : "database-kit",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/JavaScriptKit.git",
       "state" : {
-        "revision" : "d5c45fd0f5fa49de26b477896473d10232534b80",
-        "version" : "0.57.1"
+        "revision" : "8067be4d2f907ab4a25614272f9e531fddd2ecfe",
+        "version" : "0.57.2"
       }
     },
     {

@@ -12,7 +12,13 @@ final class PendingJavaScriptRequest: Sendable {
         >?
         var unclaimedResult: Result<ByteString, DatabaseTransportError>?
         var deadline: JavaScriptRequestDeadline?
-        var isCompleted = false
+        var observation: JSPromiseObservation?
+        var isCompletionClaimed = false
+    }
+
+    private struct CompletionClaim {
+        let deadline: JavaScriptRequestDeadline?
+        let observation: JSPromiseObservation?
     }
 
     private let timeoutMilliseconds: UInt32
@@ -44,13 +50,8 @@ final class PendingJavaScriptRequest: Sendable {
         for responsePromise: JSPromise
     ) async {
         let deadline = JavaScriptRequestDeadline()
-        await deadline.schedule(
-            afterMilliseconds: timeoutMilliseconds
-        ) {
-            self.complete(with: .failure(.timeout))
-        }
         let shouldObserveResponse = state.withLock { state in
-            guard !state.isCompleted else {
+            guard !state.isCompletionClaimed else {
                 return false
             }
             state.deadline = deadline
@@ -60,21 +61,50 @@ final class PendingJavaScriptRequest: Sendable {
             await deadline.cancel()
             return
         }
-        _ = responsePromise.then(
+        let observation = responsePromise.observe(
             success: { value in
+                guard let claim = self.claimCompletion() else {
+                    return .undefined
+                }
                 let result = Self.decodeResponse(
                     value,
                     maximumResponseBytes: self.maximumResponseBytes
                 )
-                self.complete(with: result)
+                self.finishCompletion(
+                    with: result,
+                    cancelling: claim
+                )
                 return .undefined
             },
             failure: { reason in
+                guard let claim = self.claimCompletion() else {
+                    return .undefined
+                }
                 let error = Self.transportError(from: reason)
-                self.complete(with: .failure(error))
+                self.finishCompletion(
+                    with: .failure(error),
+                    cancelling: claim
+                )
                 return .undefined
             }
         )
+        let didInstallObservation = state.withLock { state in
+            guard !state.isCompletionClaimed else {
+                return false
+            }
+            state.observation = observation
+            return true
+        }
+        guard didInstallObservation else {
+            observation.cancel()
+            await deadline.cancel()
+            return
+        }
+        await deadline.schedule(
+            afterMilliseconds: timeoutMilliseconds
+        ) {
+            self.complete(with: .failure(.timeout))
+        }
     }
 
     private func attachResponseContinuation(
@@ -100,36 +130,48 @@ final class PendingJavaScriptRequest: Sendable {
     private func complete(
         with result: Result<ByteString, DatabaseTransportError>
     ) {
-        let completion = state.withLock { state
-            -> (
-                CheckedContinuation<
-                    Result<ByteString, DatabaseTransportError>,
-                    Never
-                >?,
-                JavaScriptRequestDeadline?
-            )? in
-            guard !state.isCompleted else {
+        guard let claim = claimCompletion() else {
+            return
+        }
+        finishCompletion(with: result, cancelling: claim)
+    }
+
+    private func claimCompletion() -> CompletionClaim? {
+        state.withLock { state in
+            guard !state.isCompletionClaimed else {
                 return nil
             }
-            state.isCompleted = true
+            state.isCompletionClaimed = true
+            let deadline = state.deadline
+            state.deadline = nil
+            let observation = state.observation
+            state.observation = nil
+            return CompletionClaim(
+                deadline: deadline,
+                observation: observation
+            )
+        }
+    }
+
+    private func finishCompletion(
+        with result: Result<ByteString, DatabaseTransportError>,
+        cancelling claim: CompletionClaim
+    ) {
+        let continuation = state.withLock { state in
             let continuation = state.continuation
             state.continuation = nil
             if continuation == nil {
                 state.unclaimedResult = result
             }
-            let deadline = state.deadline
-            state.deadline = nil
-            return (continuation, deadline)
+            return continuation
         }
-        guard let completion else {
-            return
-        }
-        if let deadline = completion.1 {
+        claim.observation?.cancel()
+        if let deadline = claim.deadline {
             Task {
                 await deadline.cancel()
             }
         }
-        if let continuation = completion.0 {
+        if let continuation {
             continuation.resume(returning: result)
         }
     }
@@ -145,7 +187,17 @@ final class PendingJavaScriptRequest: Sendable {
                 )
             )
         }
-        guard responseArray.length <= maximumResponseBytes else {
+        let responseByteCount: Int
+        do {
+            responseByteCount = try responseArray.validatedByteLength()
+        } catch {
+            return .failure(
+                .invalidResponse(
+                    "Database response contains an invalid Uint8Array view"
+                )
+            )
+        }
+        guard responseByteCount <= maximumResponseBytes else {
             return .failure(
                 .invalidResponse(
                     "Database response exceeds the configured byte limit"
@@ -155,14 +207,20 @@ final class PendingJavaScriptRequest: Sendable {
         // JavaScript memory cannot be adopted by Swift. Copy directly into the
         // final ByteString allocation from the exact Uint8Array view without
         // an intermediate Swift array or retaining its backing ArrayBuffer.
-        let response = ByteString.copying(
-            count: responseArray.length
-        ) { bytes in
-            responseArray.copyMemory(
-                to: bytes.bindMemory(to: UInt8.self)
+        do {
+            let response = try ByteString.copying(
+                count: responseByteCount
+            ) { bytes throws(JSTypedArrayCopyError) in
+                try responseArray.copyBytes(to: bytes)
+            }
+            return .success(response)
+        } catch {
+            return .failure(
+                .invalidResponse(
+                    "Database response Uint8Array changed while being copied"
+                )
             )
         }
-        return .success(response)
     }
 
     private static func transportError(

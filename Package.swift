@@ -37,7 +37,10 @@ let package = Package(
             url: "https://github.com/1amageek/database-types.git",
             from: "26.0730.0"
         ),
-        .package(url: "https://github.com/1amageek/JavaScriptKit.git", from: "0.57.0"),
+        .package(
+            url: "https://github.com/1amageek/JavaScriptKit.git",
+            from: "0.57.2"
+        ),
     ],
     targets: [
         .target(
@@ -81,8 +84,17 @@ let package = Package(
             dependencies: [
                 "DatabaseClient",
                 .product(name: "DatabaseTypes", package: "database-types"),
+                .target(
+                    name: "DatabaseClientJavaScript",
+                    condition: .when(platforms: [.wasi])
+                ),
                 .target(name: "DatabaseClientHTTP", condition: .when(platforms: hostPlatforms)),
                 .target(name: "DatabaseClientWebSocket", condition: .when(platforms: hostPlatforms)),
+                .product(
+                    name: "JavaScriptEventLoop",
+                    package: "JavaScriptKit",
+                    condition: .when(platforms: [.wasi])
+                ),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ]
         ),

@@ -37,3 +37,20 @@
 - Foundation, Codable, URLSession, and JavaScriptKit must not enter the Embedded core target.
 - Do not silently retry, replace malformed responses, or return cached success after transport or decode failure.
 - This is version 1. Remove superseded APIs instead of retaining compatibility paths.
+
+## Test Harnesses
+
+- Run Native macOS tests with the pinned Swift 6.4 snapshot through
+  `scripts/xcode-test-harness`. The harness must inject the snapshot testing
+  runtime into the generated `.xctestrun` before executing tests and requires
+  exactly 40 passed tests with zero failures, skips, expected failures, or
+  runtime warnings.
+- Run focused JavaScript/WASI behavior tests with
+  `scripts/javascript-test-harness --filter JavaScriptDatabaseTransportTests --expected-tests 9`.
+- The final JavaScript/WASI package run is
+  `scripts/javascript-test-harness --expected-tests 18`.
+  The harness builds the real Swift test runner, packages it with PackageToJS,
+  injects the WASI Preview 1 imports required by the compiled module, and
+  requires the Swift Testing process termination signal.
+- A WASI build or PackageToJS packaging step without the Node runtime test is
+  compile evidence only. It is not JavaScript transport verification.
