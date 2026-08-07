@@ -31,7 +31,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.0804.0"
+            from: "26.0807.0"
         ),
         .package(
             url: "https://github.com/1amageek/database-types.git",
