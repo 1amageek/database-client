@@ -143,6 +143,12 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
         )
         request.setValue("Bearer \(configuration.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(configuration.databaseID, forHTTPHeaderField: "x-database-id")
+        if let tenantID = configuration.tenantID {
+            request.setValue(tenantID, forHTTPHeaderField: "x-tenant-id")
+        }
+        if let workspaceID = configuration.workspaceID {
+            request.setValue(workspaceID, forHTTPHeaderField: "x-workspace-id")
+        }
         let connectionID = nextConnectionID
         nextConnectionID = connectionID == UInt64.max
             ? 0

@@ -6,6 +6,8 @@ public struct WebSocketDatabaseConfiguration: Sendable {
     public let endpoint: URL
     public let accessToken: String
     public let databaseID: String
+    public let tenantID: String?
+    public let workspaceID: String?
     public let requestTimeout: TimeInterval
     public let maximumRequestBytes: Int
     public let maximumResponseBytes: Int
@@ -15,6 +17,8 @@ public struct WebSocketDatabaseConfiguration: Sendable {
         endpoint: URL,
         accessToken: String,
         databaseID: String = "main",
+        tenantID: String? = nil,
+        workspaceID: String? = nil,
         requestTimeout: TimeInterval = 30,
         maximumRequestBytes: Int =
             DatabaseWireLimits.default.maximumFrameBytes,
@@ -48,6 +52,8 @@ public struct WebSocketDatabaseConfiguration: Sendable {
         self.endpoint = endpoint
         self.accessToken = accessToken
         self.databaseID = databaseID
+        self.tenantID = tenantID
+        self.workspaceID = workspaceID
         self.requestTimeout = requestTimeout
         self.maximumRequestBytes = maximumRequestBytes
         self.maximumResponseBytes = maximumResponseBytes

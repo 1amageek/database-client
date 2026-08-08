@@ -36,6 +36,8 @@ struct WebSocketDatabaseTransportTests {
         #expect(frames == [Data(requestBytes)])
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer token")
         #expect(request.value(forHTTPHeaderField: "x-database-id") == "calendar")
+        #expect(request.value(forHTTPHeaderField: "x-tenant-id") == "tenant-a")
+        #expect(request.value(forHTTPHeaderField: "x-workspace-id") == "production")
         #expect(try call.decodeResponse(response).runtimeVersion == "v1")
         #expect(try address(of: response) == address(of: responseData))
         #expect(response.retainedByteCount == nil)
@@ -634,6 +636,8 @@ struct WebSocketDatabaseTransportTests {
             endpoint: endpoint,
             accessToken: "token",
             databaseID: "calendar",
+            tenantID: "tenant-a",
+            workspaceID: "production",
             requestTimeout: requestTimeout,
             maximumRequestBytes: maximumRequestBytes,
             maximumResponseBytes: maximumResponseBytes,
