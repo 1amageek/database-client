@@ -43,7 +43,7 @@
 - Run Native macOS tests with the pinned Swift 6.4 snapshot through
   `scripts/xcode-test-harness`. The harness must inject the snapshot testing
   runtime into the generated `.xctestrun` before executing tests and requires
-  exactly 40 passed tests with zero failures, skips, expected failures, or
+  exactly 48 passed tests with zero failures, skips, expected failures, or
   runtime warnings.
 - Run focused JavaScript/WASI behavior tests with
   `scripts/javascript-test-harness --filter JavaScriptDatabaseTransportTests --expected-tests 9`.
