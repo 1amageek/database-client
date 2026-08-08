@@ -11,6 +11,7 @@ Database semantics remain owned by the database runtime.
 | `DatabaseClientJavaScript` | JavaScript-hosted WASI runtime | Promise and `Uint8Array` transport |
 | `DatabaseClientHTTP` | Apple and Linux | Authenticated URLSession transport |
 | `DatabaseClientWebSocket` | Apple and Linux | Persistent WebSocket transport with request-ID correlation |
+| `DatabaseClientFramedStream` | Native, WASI, and Embedded | Ordered UInt32 length-prefixed transport over an injected byte-stream connection |
 
 The dependency boundary is intentionally one-way:
 
@@ -19,7 +20,8 @@ DatabaseClient
         │
         ├── DatabaseClientJavaScript
         ├── DatabaseClientHTTP
-        └── DatabaseClientWebSocket
+        ├── DatabaseClientWebSocket
+        └── DatabaseClientFramedStream
 ```
 
 `DatabaseClient` is the Foundation-free core of the Embedded dependency graph. It
@@ -44,6 +46,7 @@ Copies exist only where a foreign runtime requires a different owner:
 | JavaScriptKit | 1 | 1 | JavaScript `Uint8Array` and Swift memory have independent lifetimes |
 | URLSession HTTP | 1 | 0 or 1 | `URLRequest` requires `Data`; one response fragment is retained, while multiple fragments are assembled once |
 | URLSession WebSocket | 1 | 0 | The received Foundation `Data` owner is retained by `ByteString` |
+| Framed stream | 0 | 0 | Prefix and payload are separate owned writes; the injected connection returns an owned response range |
 
 Adapters retain a compatible immutable foreign owner when possible. When a copy
 is required, they copy directly into the final owner and do not create an
@@ -84,6 +87,7 @@ Target selection never removes synchronization.
 | JavaScript promise completion | `Mutex<State>` | `withLock` completion transition | Promise handlers, timers, tasks, and continuation resumption occur outside the lock |
 | HTTP request lifecycle | `Mutex<State>` | `withLock` lifecycle transition | URLSession calls, task cancellation, and continuation resumption occur outside the lock |
 | WebSocket connection and pending requests | `actor` isolation | Actor methods | Frame I/O suspends without a mutex-held critical section |
+| Framed-stream request gate and shutdown | `actor` isolation | Actor methods | Exactly one request owns the ordered stream while connection I/O remains outside non-suspending critical sections |
 
 Identifier spaces never wrap and reuse a live generation. Exhaustion is reported
 as a typed failure.
@@ -140,6 +144,20 @@ application stops. Shutdown rejects new sends, cancels the receive loop and all
 per-request send/timeout tasks, closes the connection, and does not return until
 those child tasks have completed. Concurrent shutdown callers join the same
 completion boundary.
+
+## Framed stream transport
+
+`FramedStreamDatabaseTransport` adapts an injected
+`DatabaseFramedStreamConnection` to `DatabaseTransport`. Each direction uses a
+four-byte unsigned big-endian payload length followed by exactly one
+`DatabaseWire` envelope. Zero-length, oversized, truncated, malformed, or
+request-ID-mismatched responses close the connection and remain typed failures.
+
+The transport serializes requests because one byte stream has one response
+order. It does not own a process, file descriptor, socket, or storage backend.
+The embedding application owns that concrete connection and must implement
+`shutdown()` so every pending read and write is unblocked before it returns.
+Frame limits use fixed-width comparisons and remain valid on 32-bit WASI.
 
 ## Embedded verification
 

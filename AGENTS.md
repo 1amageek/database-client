@@ -48,7 +48,7 @@
 - Run focused JavaScript/WASI behavior tests with
   `scripts/javascript-test-harness --filter JavaScriptDatabaseTransportTests --expected-tests 9`.
 - The final JavaScript/WASI package run is
-  `scripts/javascript-test-harness --expected-tests 18`.
+  `scripts/javascript-test-harness --expected-tests 26`.
   The harness builds the real Swift test runner, packages it with PackageToJS,
   injects the WASI Preview 1 imports required by the compiled module, and
   requires the Swift Testing process termination signal.

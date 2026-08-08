@@ -27,6 +27,10 @@ let package = Package(
         ),
         .library(name: "DatabaseClientHTTP", targets: ["DatabaseClientHTTP"]),
         .library(name: "DatabaseClientWebSocket", targets: ["DatabaseClientWebSocket"]),
+        .library(
+            name: "DatabaseClientFramedStream",
+            targets: ["DatabaseClientFramedStream"]
+        ),
     ],
     dependencies: [
         .package(
@@ -79,6 +83,15 @@ let package = Package(
             ],
             path: "Sources/HTTPClient"
         ),
+        .target(
+            name: "DatabaseClientFramedStream",
+            dependencies: [
+                "DatabaseClient",
+                .product(name: "DatabaseTypes", package: "database-types"),
+                .product(name: "DatabaseWire", package: "database-kit"),
+            ],
+            path: "Sources/FramedStreamClient"
+        ),
         .testTarget(
             name: "DatabaseClientTests",
             dependencies: [
@@ -90,6 +103,7 @@ let package = Package(
                 ),
                 .target(name: "DatabaseClientHTTP", condition: .when(platforms: hostPlatforms)),
                 .target(name: "DatabaseClientWebSocket", condition: .when(platforms: hostPlatforms)),
+                "DatabaseClientFramedStream",
                 .product(
                     name: "JavaScriptEventLoop",
                     package: "JavaScriptKit",
