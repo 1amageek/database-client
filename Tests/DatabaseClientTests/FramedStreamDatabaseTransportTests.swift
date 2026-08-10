@@ -11,6 +11,7 @@ struct FramedStreamDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 41,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let request = try call.encode()
@@ -244,6 +245,7 @@ private func requestBytes(requestID: UInt64) throws -> ByteString {
     try DatabaseCall(
         operation: DatabaseOperations.capabilitiesDescribe,
         requestID: requestID,
+        target: .database,
         request: EmptyOperationPayload()
     ).encode()
 }

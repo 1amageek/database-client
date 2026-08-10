@@ -1,6 +1,6 @@
 import DatabaseWire
 
-public extension DatabaseClient {
+public extension TargetedDatabaseClient {
     func startJob<Request: Sendable, Response: Sendable>(
         _ job: JobOperation<Request, Response>,
         request: Request,
@@ -12,6 +12,7 @@ public extension DatabaseClient {
         do {
             startRequest = try job.makeStartRequest(
                 request,
+                target: target,
                 maximumSliceWorkUnits: maximumSliceWorkUnits,
                 retryPolicy: retryPolicy,
                 limits: limits
@@ -24,12 +25,14 @@ public extension DatabaseClient {
             request: startRequest,
             metadata: metadata
         )
-        guard response.operation == job.identifier else {
+        let expectedJob = JobIdentity(
+            jobID: response.job.jobID,
+            operation: job.identifier,
+            target: target
+        )
+        guard response.job == expectedJob else {
             throw .jobLifecycle(
-                .mismatchedOperation(
-                    expected: job.identifier,
-                    actual: response.operation
-                )
+                .mismatchedJob(expected: expectedJob, actual: response.job)
             )
         }
         return response.job
@@ -39,6 +42,7 @@ public extension DatabaseClient {
         for job: JobIdentity,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> JobStatusOperation.Response {
+        try validateBoundJobTarget(job)
         let response = try await execute(
             DatabaseOperations.jobStatus,
             request: JobStatusOperation.Request(job: job),
@@ -52,6 +56,7 @@ public extension DatabaseClient {
         _ job: JobIdentity,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> JobCancelOperation.Response {
+        try validateBoundJobTarget(job)
         let response = try await execute(
             DatabaseOperations.jobCancel,
             request: JobCancelOperation.Request(job: job),
@@ -68,6 +73,23 @@ public extension DatabaseClient {
         guard actual == expected else {
             throw .jobLifecycle(
                 .mismatchedJob(expected: expected, actual: actual)
+            )
+        }
+    }
+
+    private func validateBoundJobTarget(
+        _ job: JobIdentity
+    ) throws(DatabaseClientError) {
+        guard job.target == target else {
+            throw .jobLifecycle(
+                .mismatchedJob(
+                    expected: JobIdentity(
+                        jobID: job.jobID,
+                        operation: job.operation,
+                        target: target
+                    ),
+                    actual: job
+                )
             )
         }
     }

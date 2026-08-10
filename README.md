@@ -60,17 +60,23 @@ Every operation statically associates its request and response types.
 let transport = JavaScriptDatabaseTransport()
 let client = DatabaseClient(transport: transport)
 
-let capabilities = try await client.execute(
+let capabilities = try await client.database.execute(
     DatabaseOperations.capabilitiesDescribe,
     request: EmptyOperationPayload(),
     metadata: OperationRequestMetadata(traceID: traceID)
 )
 ```
 
-`DatabaseClient` allocates a `UInt64` request ID, builds the canonical envelope, sends it
-through `DatabaseTransport`, validates response correlation, and decodes the typed
-response. A remote failure is returned as `RemoteOperationError` through
-`DatabaseCallError.remote`.
+Every call is explicitly target-bound. Use `client.database` for control-plane
+operations, `client.base(baseID)` for one Base, and
+`client.composition(compositionID)` for a read-only Composition. The raw
+`execute` API also requires a `DatabaseOperationTarget`; no default target is
+inferred.
+
+`DatabaseClient` allocates a `UInt64` request ID, builds the canonical envelope,
+sends it through `DatabaseTransport`, validates response correlation, and
+decodes the typed response. A remote failure is returned as
+`RemoteOperationError` through `DatabaseCallError.remote`.
 
 For split-phase runtimes, `DatabaseCall<Request, Response>` retains the concrete
 operation value and exposes encoding and response decoding without owning a
@@ -172,6 +178,14 @@ Pin the compiler and SDK to the same Swift snapshot. For the currently validated
 
 The same command with `--product DatabaseClientJavaScript` verifies the
 JavaScript transport inside a true Embedded WebAssembly build.
+
+The 26.0809.1 release gate uses the same source revision for all three checks:
+
+| Target | Required result |
+| --- | --- |
+| Native macOS | 49 passed; zero failures, skips, expected failures, or runtime warnings |
+| JavaScript/WASI on Node | 27 passed; zero failures or skips; normal Swift Testing process termination |
+| Embedded WASM `DatabaseClient` | Product compiles and links with the pinned Embedded SDK |
 
 ## Versioned dependencies
 

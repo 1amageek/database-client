@@ -4,12 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEME="database-client-Package"
 DESTINATION="platform=macOS,arch=arm64"
-EXPECTED_TEST_COUNT=48
+EXPECTED_TEST_COUNT=49
 TOOLCHAIN_IDENTIFIER="org.swift.64202607231a"
 BUILD_TIMEOUT_SECONDS="${XCODE_TEST_BUILD_TIMEOUT_SECONDS:-1200}"
 TEST_TIMEOUT_SECONDS="${XCODE_TEST_TIMEOUT_SECONDS:-1200}"
 RESULT_DIRECTORY="${XCODE_TEST_RESULT_DIRECTORY:-${TMPDIR:-/tmp}/database-client-xcode-results}"
+REQUESTED_WORK_ROOT="${XCODE_TEST_WORK_ROOT:-}"
 WORK_ROOT=""
+OWNS_WORK_ROOT=false
 
 timeout_command() {
   local seconds="$1"
@@ -18,7 +20,9 @@ timeout_command() {
 }
 
 cleanup() {
-  if [[ -z "$WORK_ROOT" || ! -d "$WORK_ROOT" ]]; then
+  if [[ "$OWNS_WORK_ROOT" != true \
+      || -z "$WORK_ROOT" \
+      || ! -d "$WORK_ROOT" ]]; then
     return
   fi
   local expected_prefix="${TMPDIR:-/tmp}/database-client-xcode-test."
@@ -128,7 +132,20 @@ export TOOLCHAINS="$TOOLCHAIN_IDENTIFIER"
 xcrun --toolchain "$TOOLCHAIN_IDENTIFIER" swift --version
 xcodebuild -version
 
-WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/database-client-xcode-test.XXXXXX")"
+if [[ -n "$REQUESTED_WORK_ROOT" ]]; then
+  case "$REQUESTED_WORK_ROOT" in
+    /*) ;;
+    *)
+      echo "error: XCODE_TEST_WORK_ROOT must be an absolute path" >&2
+      exit 1
+      ;;
+  esac
+  WORK_ROOT="$REQUESTED_WORK_ROOT"
+  mkdir -p "$WORK_ROOT"
+else
+  WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/database-client-xcode-test.XXXXXX")"
+  OWNS_WORK_ROOT=true
+fi
 derived_data="$WORK_ROOT/DerivedData"
 mkdir -p "$derived_data" "$RESULT_DIRECTORY"
 run_identifier="$(date -u +%Y%m%d-%H%M%S)-$$"

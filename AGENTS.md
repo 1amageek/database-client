@@ -43,14 +43,24 @@
 - Run Native macOS tests with the pinned Swift 6.4 snapshot through
   `scripts/xcode-test-harness`. The harness must inject the snapshot testing
   runtime into the generated `.xctestrun` before executing tests and requires
-  exactly 48 passed tests with zero failures, skips, expected failures, or
+  exactly 49 passed tests with zero failures, skips, expected failures, or
   runtime warnings.
+- Set `XCODE_TEST_WORK_ROOT` to an explicit absolute temporary directory when
+  iterating locally. The harness preserves that DerivedData so subsequent
+  corrections compile incrementally; release evidence still executes the
+  complete test bundle after the final build.
 - Run focused JavaScript/WASI behavior tests with
   `scripts/javascript-test-harness --filter JavaScriptDatabaseTransportTests --expected-tests 9`.
 - The final JavaScript/WASI package run is
-  `scripts/javascript-test-harness --expected-tests 26`.
+  `scripts/javascript-test-harness --expected-tests 27`.
   The harness builds the real Swift test runner, packages it with PackageToJS,
   injects the WASI Preview 1 imports required by the compiled module, and
   requires the Swift Testing process termination signal.
 - A WASI build or PackageToJS packaging step without the Node runtime test is
   compile evidence only. It is not JavaScript transport verification.
+- The JavaScript harness allows 600 seconds for a cold host-macro and WASM
+  build; retain the generated `.build` directory for incremental diagnosis.
+- The final Embedded gate builds `DatabaseClient` with
+  `swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm-embedded`. This compile
+  and link gate supplements, but does not replace, the Native and Node runtime
+  behavior suites.

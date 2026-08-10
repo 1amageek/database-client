@@ -13,6 +13,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 41,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let requestBytes = try call.encode()
@@ -98,6 +99,7 @@ struct WebSocketDatabaseTransportTests {
         ).encodeRequest(
             DatabaseOperations.queryExecute,
             requestID: 47,
+            target: .database,
             request: QueryExecuteOperation.Request(
                 input: .text(
                     language: .sql,
@@ -168,6 +170,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 48,
+            target: .database,
             request: EmptyOperationPayload()
         )
 
@@ -184,6 +187,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 42,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let response = Data(try successResponse(requestID: 42))
@@ -212,6 +216,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 43,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -255,6 +260,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 44,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -279,6 +285,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 53,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(messages: [])
@@ -308,6 +315,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 54,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -338,6 +346,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 55,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -371,6 +380,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 56,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -404,11 +414,13 @@ struct WebSocketDatabaseTransportTests {
         let firstCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 45,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let secondCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 46,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -452,11 +464,13 @@ struct WebSocketDatabaseTransportTests {
         let cancelledCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 57,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let activeCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 58,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -505,6 +519,7 @@ struct WebSocketDatabaseTransportTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 49,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -579,6 +594,7 @@ struct WebSocketDatabaseTransportTests {
         let firstCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 50,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let firstRequest = Task {
@@ -593,6 +609,7 @@ struct WebSocketDatabaseTransportTests {
         let secondCall = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 51,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let secondRequest = Task {

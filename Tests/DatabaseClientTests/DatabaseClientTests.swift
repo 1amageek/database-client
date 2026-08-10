@@ -1,4 +1,5 @@
 @testable import DatabaseClient
+import DatabaseKit
 import DatabaseTypes
 import DatabaseWire
 import Synchronization
@@ -9,6 +10,7 @@ struct DatabaseClientTests {
     @Test("typed calls encode metadata and decode the matching response")
     func typedCallRoundTrips() async throws {
         let capturedIDs = Mutex<[UInt64]>([])
+        let capturedTargets = Mutex<[DatabaseOperationTarget]>([])
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
@@ -16,6 +18,7 @@ struct DatabaseClientTests {
                 from: bytes
             )
             capturedIDs.withLock { $0.append(request.requestID) }
+            capturedTargets.withLock { $0.append(request.target) }
             if request.requestID == 1 {
                 #expect(request.metadata.traceID == "trace-a")
             } else {
@@ -28,20 +31,36 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
+        let baseID = try Base.ID("company-a")
+        let compositionID = try Base.Composition.ID("shared-world")
 
         let first = try await client.execute(
             DatabaseOperations.capabilitiesDescribe,
+            target: .database,
             request: EmptyOperationPayload(),
             metadata: OperationRequestMetadata(traceID: "trace-a")
         )
-        let second = try await client.execute(
+        let second = try await client.base(baseID).execute(
+            DatabaseOperations.capabilitiesDescribe,
+            request: EmptyOperationPayload()
+        )
+        let third = try await client.composition(compositionID).execute(
             DatabaseOperations.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
 
         #expect(first.runtimeVersion == "1")
         #expect(second.runtimeVersion == "1")
-        #expect(capturedIDs.withLock { $0 } == [1, 2])
+        #expect(third.runtimeVersion == "1")
+        #expect(capturedIDs.withLock { $0 } == [1, 2, 3])
+        #expect(
+            capturedTargets.withLock { $0 }
+                == [
+                    .database,
+                    .base(baseID),
+                    .composition(compositionID),
+                ]
+        )
     }
 
     @Test("concurrent calls reserve unique identifiers without serializing transport I/O")
@@ -66,10 +85,12 @@ struct DatabaseClientTests {
 
         async let first = client.execute(
             DatabaseOperations.capabilitiesDescribe,
+            target: .database,
             request: EmptyOperationPayload()
         )
         async let second = client.execute(
             DatabaseOperations.capabilitiesDescribe,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let responses = try await [first, second]
@@ -99,11 +120,13 @@ struct DatabaseClientTests {
 
         _ = try await client.execute(
             DatabaseOperations.capabilitiesDescribe,
+            target: .database,
             request: EmptyOperationPayload()
         )
         await #expect(throws: DatabaseClientError.requestIdentifierExhausted) {
             _ = try await client.execute(
                 DatabaseOperations.capabilitiesDescribe,
+                target: .database,
                 request: EmptyOperationPayload()
             )
         }
@@ -120,6 +143,7 @@ struct DatabaseClientTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.maintenanceExecute,
             requestID: 1,
+            target: .database,
             request: MaintenanceExecuteOperation.Request(
                 invocation: .compact
             )
@@ -144,6 +168,7 @@ struct DatabaseClientTests {
         ) {
             _ = try await client.execute(
                 DatabaseOperations.capabilitiesDescribe,
+                target: .database,
                 request: EmptyOperationPayload()
             )
         }
@@ -154,6 +179,7 @@ struct DatabaseClientTests {
         let call = DatabaseCall(
             operation: DatabaseOperations.capabilitiesDescribe,
             requestID: 8,
+            target: .database,
             request: EmptyOperationPayload()
         )
         let response = try encodeResponse(
@@ -176,7 +202,8 @@ struct DatabaseClientTests {
         let jobOperation = JobOperations.maintenance
         let job = JobIdentity(
             jobID: UUID(high: 0x1111, low: 0x2222),
-            operation: jobOperation.identifier
+            operation: jobOperation.identifier,
+            target: .database
         )
         let statusResponse = try JobStatusOperation.Response(
             state: .running,
@@ -205,6 +232,7 @@ struct DatabaseClientTests {
                     DatabaseOperations.jobStart,
                     from: bytes
                 )
+                #expect(request.target == job.target)
                 #expect(request.request.maximumSliceWorkUnits == 17)
                 #expect(request.request.operation == jobOperation.identifier)
                 return try encodeResponse(
@@ -217,6 +245,7 @@ struct DatabaseClientTests {
                     DatabaseOperations.jobStatus,
                     from: bytes
                 )
+                #expect(request.target == job.target)
                 #expect(request.request.job == job)
                 return try encodeResponse(
                     DatabaseOperations.jobStatus,
@@ -228,6 +257,7 @@ struct DatabaseClientTests {
                     DatabaseOperations.jobCancel,
                     from: bytes
                 )
+                #expect(request.target == job.target)
                 #expect(request.request.job == job)
                 return try encodeResponse(
                     DatabaseOperations.jobCancel,
@@ -241,16 +271,17 @@ struct DatabaseClientTests {
             }
         }
         let client = DatabaseClient(transport: transport)
+        let database = client.database
 
-        let started = try await client.startJob(
+        let started = try await database.startJob(
             jobOperation,
             request: MaintenanceExecuteOperation.Request(
                 invocation: .compact
             ),
             maximumSliceWorkUnits: 17
         )
-        let status = try await client.jobStatus(for: started)
-        let cancelled = try await client.cancelJob(started)
+        let status = try await database.jobStatus(for: started)
+        let cancelled = try await database.cancelJob(started)
 
         #expect(started == job)
         #expect(status.job == job)
@@ -263,12 +294,44 @@ struct DatabaseClientTests {
         )
     }
 
+    @Test("job lifecycle rejects a job from another target before transport")
+    func jobLifecycleRejectsAnotherTarget() async throws {
+        let baseID = try Base.ID("company-a")
+        let job = JobIdentity(
+            jobID: UUID(high: 0x9000, low: 0x0001),
+            operation: JobOperations.maintenance.identifier,
+            target: .base(baseID)
+        )
+        let transportInvocations = Mutex(0)
+        let transport = ScriptedDatabaseTransport {
+            _ throws(DatabaseTransportError) in
+            transportInvocations.withLock { $0 += 1 }
+            throw .invalidResponse("Transport must not be called")
+        }
+        let database = DatabaseClient(transport: transport).database
+        let expectedJob = JobIdentity(
+            jobID: job.jobID,
+            operation: job.operation,
+            target: .database
+        )
+
+        await #expect(
+            throws: DatabaseClientError.jobLifecycle(
+                .mismatchedJob(expected: expectedJob, actual: job)
+            )
+        ) {
+            _ = try await database.jobStatus(for: job)
+        }
+        #expect(transportInvocations.withLock { $0 } == 0)
+    }
+
     @Test("paged job results verify integrity and decode the original response")
     func pagedJobResultDecodesOriginalResponse() async throws {
         let jobOperation = JobOperations.maintenance
         let job = JobIdentity(
             jobID: UUID(high: 0x1020, low: 0x3040),
-            operation: jobOperation.identifier
+            operation: jobOperation.identifier,
+            target: .database
         )
         let originalResponse = MaintenanceExecuteOperation.Response.execution(
             MaintenanceExecuteOperation.ExecutionResult(
@@ -292,7 +355,8 @@ struct DatabaseClientTests {
             return payload[lowerBound..<upperBound]
         }
         var accumulator = JobResultDigestAccumulator(
-            operation: job.operation
+            operation: job.operation,
+            target: job.target
         )
         accumulator.update(payload)
         let digest = accumulator.finalize()
@@ -333,8 +397,9 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
+        let database = client.database
 
-        let decoded = try await client.jobResult(
+        let decoded = try await database.jobResult(
             for: job,
             using: jobOperation
         )
@@ -355,7 +420,8 @@ struct DatabaseClientTests {
         let jobOperation = JobOperations.maintenance
         let job = JobIdentity(
             jobID: UUID(high: 0x5060, low: 0x7080),
-            operation: jobOperation.identifier
+            operation: jobOperation.identifier,
+            target: .database
         )
         let originalResponse = MaintenanceExecuteOperation.Response.execution(
             MaintenanceExecuteOperation.ExecutionResult(
@@ -393,8 +459,10 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
+        let database = client.database
         var actualDigestAccumulator = JobResultDigestAccumulator(
-            operation: job.operation
+            operation: job.operation,
+            target: job.target
         )
         actualDigestAccumulator.update(payload)
         let actualDigest = actualDigestAccumulator.finalize()
@@ -407,7 +475,7 @@ struct DatabaseClientTests {
                 )
             )
         ) {
-            _ = try await client.jobResult(
+            _ = try await database.jobResult(
                 for: job,
                 using: jobOperation
             )

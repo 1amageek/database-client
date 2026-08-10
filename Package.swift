@@ -35,7 +35,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.0809.4"
+            from: "26.0809.8"
         ),
         .package(
             url: "https://github.com/1amageek/database-types.git",
@@ -51,6 +51,7 @@ let package = Package(
             name: "DatabaseClient",
             dependencies: [
                 .product(name: "DatabaseTypes", package: "database-types"),
+                .product(name: "DatabaseKit", package: "database-kit"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
             path: "Sources/DatabaseClient"

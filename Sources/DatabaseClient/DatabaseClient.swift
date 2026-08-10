@@ -29,6 +29,7 @@ public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
 
     public final func execute<Request: Sendable, Response: Sendable>(
         _ operation: DatabaseOperation<Request, Response>,
+        target: DatabaseOperationTarget,
         request: Request,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> Response {
@@ -36,6 +37,7 @@ public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
         let call = DatabaseCall(
             operation: operation,
             requestID: requestID,
+            target: target,
             metadata: metadata,
             request: request
         )

@@ -4,17 +4,20 @@ public import DatabaseWire
 public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
     public let operation: DatabaseOperation<Request, Response>
     public let requestID: UInt64
+    public let target: DatabaseOperationTarget
     public let metadata: OperationRequestMetadata
     public let request: Request
 
     public init(
         operation: DatabaseOperation<Request, Response>,
         requestID: UInt64,
+        target: DatabaseOperationTarget,
         metadata: OperationRequestMetadata = OperationRequestMetadata(),
         request: Request
     ) {
         self.operation = operation
         self.requestID = requestID
+        self.target = target
         self.metadata = metadata
         self.request = request
     }
@@ -26,6 +29,7 @@ public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
             return try DatabaseWireEncoder(limits: limits).encodeRequest(
                 operation,
                 requestID: requestID,
+                target: target,
                 metadata: metadata,
                 request: request,
             )
