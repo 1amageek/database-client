@@ -21,7 +21,7 @@ public extension TargetedDatabaseClient {
             throw .call(.wire(error))
         }
         let response = try await execute(
-            DatabaseOperations.jobStart,
+            DatabaseOperationCatalog.jobStart,
             request: startRequest,
             metadata: metadata
         )
@@ -44,7 +44,7 @@ public extension TargetedDatabaseClient {
     ) async throws(DatabaseClientError) -> JobStatusOperation.Response {
         try validateBoundJobTarget(job)
         let response = try await execute(
-            DatabaseOperations.jobStatus,
+            DatabaseOperationCatalog.jobStatus,
             request: JobStatusOperation.Request(job: job),
             metadata: metadata
         )
@@ -58,7 +58,7 @@ public extension TargetedDatabaseClient {
     ) async throws(DatabaseClientError) -> JobCancelOperation.Response {
         try validateBoundJobTarget(job)
         let response = try await execute(
-            DatabaseOperations.jobCancel,
+            DatabaseOperationCatalog.jobCancel,
             request: JobCancelOperation.Request(job: job),
             metadata: metadata
         )

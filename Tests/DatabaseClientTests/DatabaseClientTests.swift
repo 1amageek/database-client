@@ -14,7 +14,7 @@ struct DatabaseClientTests {
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 from: bytes
             )
             capturedIDs.withLock { $0.append(request.requestID) }
@@ -25,7 +25,7 @@ struct DatabaseClientTests {
                 #expect(request.metadata.traceID == nil)
             }
             return try encodeResponse(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 requestID: request.requestID,
                 response: capabilitiesResponse()
             )
@@ -35,17 +35,17 @@ struct DatabaseClientTests {
         let compositionID = try Base.Composition.ID("shared-world")
 
         let first = try await client.execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             target: .database,
             request: EmptyOperationPayload(),
             metadata: OperationRequestMetadata(traceID: "trace-a")
         )
         let second = try await client.base(baseID).execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
         let third = try await client.composition(compositionID).execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
 
@@ -70,13 +70,13 @@ struct DatabaseClientTests {
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 from: bytes
             )
             capturedIDs.withLock { $0.append(request.requestID) }
             await barrier.arrive()
             return try encodeResponse(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 requestID: request.requestID,
                 response: capabilitiesResponse()
             )
@@ -84,12 +84,12 @@ struct DatabaseClientTests {
         let client = DatabaseClient(transport: transport)
 
         async let first = client.execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             target: .database,
             request: EmptyOperationPayload()
         )
         async let second = client.execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             target: .database,
             request: EmptyOperationPayload()
         )
@@ -104,11 +104,11 @@ struct DatabaseClientTests {
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 from: bytes
             )
             return try encodeResponse(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 requestID: request.requestID,
                 response: capabilitiesResponse()
             )
@@ -119,13 +119,13 @@ struct DatabaseClientTests {
         )
 
         _ = try await client.execute(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             target: .database,
             request: EmptyOperationPayload()
         )
         await #expect(throws: DatabaseClientError.requestIdentifierExhausted) {
             _ = try await client.execute(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 target: .database,
                 request: EmptyOperationPayload()
             )
@@ -141,7 +141,7 @@ struct DatabaseClientTests {
             retryability: .never
         )
         let call = DatabaseCall(
-            operation: DatabaseOperations.maintenanceExecute,
+            operation: DatabaseOperationCatalog.maintenanceExecute,
             requestID: 1,
             target: .database,
             request: MaintenanceExecuteOperation.Request(
@@ -167,7 +167,7 @@ struct DatabaseClientTests {
             throws: DatabaseClientError.transport(.timeout)
         ) {
             _ = try await client.execute(
-                DatabaseOperations.capabilitiesDescribe,
+                DatabaseOperationCatalog.capabilitiesDescribe,
                 target: .database,
                 request: EmptyOperationPayload()
             )
@@ -177,13 +177,13 @@ struct DatabaseClientTests {
     @Test("response correlation rejects a mismatched request identifier")
     func responseCorrelationRejectsMismatch() throws {
         let call = DatabaseCall(
-            operation: DatabaseOperations.capabilitiesDescribe,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 8,
             target: .database,
             request: EmptyOperationPayload()
         )
         let response = try encodeResponse(
-            DatabaseOperations.capabilitiesDescribe,
+            DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 9,
             response: capabilitiesResponse()
         )
@@ -229,38 +229,38 @@ struct DatabaseClientTests {
             switch envelope.operation {
             case .jobStart:
                 let request = try decodeRequest(
-                    DatabaseOperations.jobStart,
+                    DatabaseOperationCatalog.jobStart,
                     from: bytes
                 )
                 #expect(request.target == job.target)
                 #expect(request.request.maximumSliceWorkUnits == 17)
                 #expect(request.request.operation == jobOperation.identifier)
                 return try encodeResponse(
-                    DatabaseOperations.jobStart,
+                    DatabaseOperationCatalog.jobStart,
                     requestID: request.requestID,
                     response: JobStartOperation.Response(job: job)
                 )
             case .jobStatus:
                 let request = try decodeRequest(
-                    DatabaseOperations.jobStatus,
+                    DatabaseOperationCatalog.jobStatus,
                     from: bytes
                 )
                 #expect(request.target == job.target)
                 #expect(request.request.job == job)
                 return try encodeResponse(
-                    DatabaseOperations.jobStatus,
+                    DatabaseOperationCatalog.jobStatus,
                     requestID: request.requestID,
                     response: statusResponse
                 )
             case .jobCancel:
                 let request = try decodeRequest(
-                    DatabaseOperations.jobCancel,
+                    DatabaseOperationCatalog.jobCancel,
                     from: bytes
                 )
                 #expect(request.target == job.target)
                 #expect(request.request.job == job)
                 return try encodeResponse(
-                    DatabaseOperations.jobCancel,
+                    DatabaseOperationCatalog.jobCancel,
                     requestID: request.requestID,
                     response: cancellationResponse
                 )
@@ -343,7 +343,7 @@ struct DatabaseClientTests {
         )
         let payload = try DatabaseWireEncoder()
             .encodeResponseAndPayload(
-                DatabaseOperations.maintenanceExecute,
+                DatabaseOperationCatalog.maintenanceExecute,
                 requestID: 0,
                 response: originalResponse
             )
@@ -364,7 +364,7 @@ struct DatabaseClientTests {
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
-                DatabaseOperations.jobResult,
+                DatabaseOperationCatalog.jobResult,
                 from: bytes
             )
             capturedRequestIDs.withLock { $0.append(request.requestID) }
@@ -385,7 +385,7 @@ struct DatabaseClientTests {
                 )
                 : nil
             return try encodeResponse(
-                DatabaseOperations.jobResult,
+                DatabaseOperationCatalog.jobResult,
                 requestID: request.requestID,
                 response: .succeeded(
                     job: job,
@@ -432,7 +432,7 @@ struct DatabaseClientTests {
         )
         let payload = try DatabaseWireEncoder()
             .encodeResponseAndPayload(
-                DatabaseOperations.maintenanceExecute,
+                DatabaseOperationCatalog.maintenanceExecute,
                 requestID: 0,
                 response: originalResponse
             )
@@ -443,11 +443,11 @@ struct DatabaseClientTests {
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
-                DatabaseOperations.jobResult,
+                DatabaseOperationCatalog.jobResult,
                 from: bytes
             )
             return try encodeResponse(
-                DatabaseOperations.jobResult,
+                DatabaseOperationCatalog.jobResult,
                 requestID: request.requestID,
                 response: .succeeded(
                     job: job,

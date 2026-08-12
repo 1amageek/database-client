@@ -35,7 +35,7 @@ public extension TargetedDatabaseClient {
 
         repeat {
             let result = try await execute(
-                DatabaseOperations.jobResult,
+                DatabaseOperationCatalog.jobResult,
                 request: JobResultOperation.Request(
                     job: job,
                     continuation: continuation

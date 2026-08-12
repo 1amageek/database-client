@@ -61,7 +61,7 @@ let transport = JavaScriptDatabaseTransport()
 let client = DatabaseClient(transport: transport)
 
 let capabilities = try await client.database.execute(
-    DatabaseOperations.capabilitiesDescribe,
+    DatabaseOperationCatalog.capabilitiesDescribe,
     request: EmptyOperationPayload(),
     metadata: OperationRequestMetadata(traceID: traceID)
 )
@@ -179,7 +179,7 @@ Pin the compiler and SDK to the same Swift snapshot. For the currently validated
 The same command with `--product DatabaseClientJavaScript` verifies the
 JavaScript transport inside a true Embedded WebAssembly build.
 
-The 26.0809.1 release gate uses the same source revision for all three checks:
+The 26.0812.0 release gate uses the same source revision for all three checks:
 
 | Target | Required result |
 | --- | --- |

@@ -9,7 +9,7 @@ struct FramedStreamDatabaseTransportTests {
     @Test("request and response use the length-prefixed stream without combining payloads")
     func requestAndResponseTraverseStream() async throws {
         let call = DatabaseCall(
-            operation: DatabaseOperations.capabilitiesDescribe,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 41,
             target: .database,
             request: EmptyOperationPayload()
@@ -243,7 +243,7 @@ private actor ScriptedFramedStreamConnection:
 
 private func requestBytes(requestID: UInt64) throws -> ByteString {
     try DatabaseCall(
-        operation: DatabaseOperations.capabilitiesDescribe,
+        operation: DatabaseOperationCatalog.capabilitiesDescribe,
         requestID: requestID,
         target: .database,
         request: EmptyOperationPayload()
@@ -252,7 +252,7 @@ private func requestBytes(requestID: UInt64) throws -> ByteString {
 
 private func successResponse(requestID: UInt64) throws -> ByteString {
     try DatabaseWireEncoder().encodeResponse(
-        DatabaseOperations.capabilitiesDescribe,
+        DatabaseOperationCatalog.capabilitiesDescribe,
         requestID: requestID,
         response: CapabilitiesDescribeOperation.Response(
             runtimeVersion: "v1",
