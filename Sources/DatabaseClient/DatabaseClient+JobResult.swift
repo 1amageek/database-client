@@ -1,7 +1,7 @@
 import DatabaseTypes
 import DatabaseWire
 
-public extension TargetedDatabaseClient {
+public extension DatabaseSessionClient {
     /// Reads every immutable result page, verifies its canonical digest, and
     /// decodes the response associated with the exact job descriptor.
     func jobResult<Request: Sendable, Response: Sendable>(
@@ -9,6 +9,7 @@ public extension TargetedDatabaseClient {
         using operation: JobOperation<Request, Response>,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> Response {
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         guard job.operation == operation.identifier,
               job.target == target else {
             throw .jobResult(
@@ -22,16 +23,35 @@ public extension TargetedDatabaseClient {
                 )
             )
         }
+        #else
+        guard job.operation == operation.identifier else {
+            throw .jobResult(
+                .mismatchedJob(
+                    expected: JobIdentity(
+                        jobID: job.jobID,
+                        operation: operation.identifier
+                    ),
+                    actual: job
+                )
+            )
+        }
+        #endif
         var continuation: JobResultOperation.Continuation?
         var expectedTotalByteCount: UInt64?
         var expectedDigest: JobResultDigest?
         var expectedContinuationIndex: UInt32 = 1
         var receivedByteCount: UInt64 = 0
         var responseBytes: [UInt8] = []
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         var digestAccumulator = JobResultDigestAccumulator(
             operation: job.operation,
             target: job.target
         )
+        #else
+        var digestAccumulator = JobResultDigestAccumulator(
+            operation: job.operation
+        )
+        #endif
 
         repeat {
             let result = try await execute(

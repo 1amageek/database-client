@@ -60,18 +60,30 @@ Every operation statically associates its request and response types.
 let transport = JavaScriptDatabaseTransport()
 let client = DatabaseClient(transport: transport)
 
-let capabilities = try await client.database.execute(
+let capabilities = try await client.execute(
     DatabaseOperationCatalog.capabilitiesDescribe,
     request: EmptyOperationPayload(),
     metadata: OperationRequestMetadata(traceID: traceID)
 )
 ```
 
-Every call is explicitly target-bound. Use `client.database` for control-plane
-operations, `client.base(baseID)` for one Base, and
-`client.composition(compositionID)` for a read-only Composition. The raw
-`execute` API also requires a `DatabaseOperationTarget`; no default target is
-inferred.
+The default client is target-free because the default runtime has one database
+execution root. `DatabaseClient.execute` sends that operation directly; it does
+not construct a synthetic `.database` target.
+
+The non-default `MultipleBases` trait adds the target-bound
+`DatabaseSessionClient` surface. In that graph, use `client.database` for the
+control domain, `client.base(baseID)` for one Base, and
+`client.composition(compositionID)` for a read-only Composition. Only that
+trait-enabled graph exposes `DatabaseOperationTarget`.
+
+```swift
+let company = client.base(try Base.ID("company-a"))
+let rows = try await company.execute(
+    DatabaseOperationCatalog.queryExecute,
+    request: request
+)
+```
 
 `DatabaseClient` allocates a `UInt64` request ID, builds the canonical envelope,
 sends it through `DatabaseTransport`, validates response correlation, and
@@ -85,7 +97,7 @@ transport.
 ## Concurrency contract
 
 The same state-isolation contract applies to Native, WASM, and Embedded builds.
-Target selection never removes synchronization.
+Enabling target selection never removes synchronization.
 
 | Logical state | Storage | Read and mutation entry point | External work |
 |---|---|---|---|
@@ -179,11 +191,12 @@ Pin the compiler and SDK to the same Swift snapshot. For the currently validated
 The same command with `--product DatabaseClientJavaScript` verifies the
 JavaScript transport inside a true Embedded WebAssembly build.
 
-The 26.0812.0 release gate uses the same source revision for all three checks:
+The release gate uses the same source revision for all checks:
 
 | Target | Required result |
 | --- | --- |
-| Native macOS | 49 passed; zero failures, skips, expected failures, or runtime warnings |
+| Native macOS, standard | 48 passed; zero failures, skips, expected failures, or runtime warnings |
+| Native macOS, `MultipleBases` | 49 passed with `DATABASE_CLIENT_EXPECTED_TEST_COUNT=49`; zero failures, skips, expected failures, or runtime warnings |
 | JavaScript/WASI on Node | 27 passed; zero failures or skips; normal Swift Testing process termination |
 | Embedded WASM `DatabaseClient` | Product compiles and links with the pinned Embedded SDK |
 

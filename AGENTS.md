@@ -43,8 +43,10 @@
 - Run Native macOS tests with the pinned Swift 6.4 snapshot through
   `scripts/xcode-test-harness`. The harness must inject the snapshot testing
   runtime into the generated `.xctestrun` before executing tests and requires
-  exactly 49 passed tests with zero failures, skips, expected failures, or
-  runtime warnings.
+  exactly 48 passed tests for the standard graph. An isolated `MultipleBases`
+  graph uses `DATABASE_CLIENT_EXPECTED_TEST_COUNT=49` and requires 49 passed
+  tests. Both runs require zero failures, skips, expected failures, or runtime
+  warnings.
 - Set `XCODE_TEST_WORK_ROOT` to an explicit absolute temporary directory when
   iterating locally. The harness preserves that DerivedData so subsequent
   corrections compile incrementally; release evidence still executes the

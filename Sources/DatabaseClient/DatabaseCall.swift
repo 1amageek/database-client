@@ -4,10 +4,13 @@ public import DatabaseWire
 public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
     public let operation: DatabaseOperation<Request, Response>
     public let requestID: UInt64
+    #if DATABASE_CLIENT_MULTIPLE_BASES
     public let target: DatabaseOperationTarget
+    #endif
     public let metadata: OperationRequestMetadata
     public let request: Request
 
+    #if DATABASE_CLIENT_MULTIPLE_BASES
     public init(
         operation: DatabaseOperation<Request, Response>,
         requestID: UInt64,
@@ -21,11 +24,25 @@ public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
         self.metadata = metadata
         self.request = request
     }
+    #else
+    public init(
+        operation: DatabaseOperation<Request, Response>,
+        requestID: UInt64,
+        metadata: OperationRequestMetadata = OperationRequestMetadata(),
+        request: Request
+    ) {
+        self.operation = operation
+        self.requestID = requestID
+        self.metadata = metadata
+        self.request = request
+    }
+    #endif
 
     public func encode(
         limits: DatabaseWireLimits = .default
     ) throws(DatabaseCallError) -> ByteString {
         do {
+            #if DATABASE_CLIENT_MULTIPLE_BASES
             return try DatabaseWireEncoder(limits: limits).encodeRequest(
                 operation,
                 requestID: requestID,
@@ -33,6 +50,14 @@ public struct DatabaseCall<Request: Sendable, Response: Sendable>: Sendable {
                 metadata: metadata,
                 request: request,
             )
+            #else
+            return try DatabaseWireEncoder(limits: limits).encodeRequest(
+                operation,
+                requestID: requestID,
+                metadata: metadata,
+                request: request,
+            )
+            #endif
         } catch let error {
             throw .wire(error)
         }

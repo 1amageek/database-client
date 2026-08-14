@@ -8,10 +8,9 @@ import Testing
 struct FramedStreamDatabaseTransportTests {
     @Test("request and response use the length-prefixed stream without combining payloads")
     func requestAndResponseTraverseStream() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 41,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let request = try call.encode()
@@ -242,10 +241,9 @@ private actor ScriptedFramedStreamConnection:
 }
 
 private func requestBytes(requestID: UInt64) throws -> ByteString {
-    try DatabaseCall(
+    try makeTestDatabaseCall(
         operation: DatabaseOperationCatalog.capabilitiesDescribe,
         requestID: requestID,
-        target: .database,
         request: EmptyOperationPayload()
     ).encode()
 }

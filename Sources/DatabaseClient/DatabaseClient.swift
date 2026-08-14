@@ -27,6 +27,7 @@ public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
         self.nextRequestID = Atomic(firstRequestID)
     }
 
+    #if DATABASE_CLIENT_MULTIPLE_BASES
     public final func execute<Request: Sendable, Response: Sendable>(
         _ operation: DatabaseOperation<Request, Response>,
         target: DatabaseOperationTarget,
@@ -62,6 +63,41 @@ public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
             throw .call(error)
         }
     }
+    #else
+    public final func execute<Request: Sendable, Response: Sendable>(
+        _ operation: DatabaseOperation<Request, Response>,
+        request: Request,
+        metadata: OperationRequestMetadata = OperationRequestMetadata()
+    ) async throws(DatabaseClientError) -> Response {
+        let requestID = try reserveRequestID()
+        let call = DatabaseCall(
+            operation: operation,
+            requestID: requestID,
+            metadata: metadata,
+            request: request
+        )
+
+        let requestBytes: ByteString
+        do {
+            requestBytes = try call.encode(limits: limits)
+        } catch let error {
+            throw .call(error)
+        }
+
+        let responseBytes: ByteString
+        do {
+            responseBytes = try await transport.send(requestBytes)
+        } catch let error {
+            throw .transport(error)
+        }
+
+        do {
+            return try call.decodeResponse(responseBytes, limits: limits)
+        } catch let error {
+            throw .call(error)
+        }
+    }
+    #endif
 
     private func reserveRequestID() throws(DatabaseClientError) -> UInt64 {
         var candidate = nextRequestID.load(ordering: .relaxed)

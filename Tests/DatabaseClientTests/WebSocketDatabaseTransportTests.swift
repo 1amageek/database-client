@@ -10,10 +10,9 @@ import Testing
 struct WebSocketDatabaseTransportTests {
     @Test("request and response traverse the injected connection")
     func requestAndResponseTraverseConnection() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 41,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let requestBytes = try call.encode()
@@ -94,12 +93,9 @@ struct WebSocketDatabaseTransportTests {
     func routingDoesNotDecodeRequestPayload() async throws {
         let payloadByteCount = DatabaseWireLimits.default.maximumFrameBytes
         let limits = try largeFrameLimits(payloadByteCount: payloadByteCount)
-        let requestBytes = try DatabaseWireEncoder(
-            limits: limits
-        ).encodeRequest(
-            DatabaseOperationCatalog.queryExecute,
+        let requestBytes = try makeTestDatabaseCall(
+            operation: DatabaseOperationCatalog.queryExecute,
             requestID: 47,
-            target: .database,
             request: QueryExecuteOperation.Request(
                 input: .text(
                     language: .sql,
@@ -109,7 +105,7 @@ struct WebSocketDatabaseTransportTests {
                     )
                 )
             )
-        )
+        ).encode(limits: limits)
         let connection = ScriptedDatabaseWebSocketConnection(
             messages: [
                 .data(Data(try successResponse(requestID: 47))),
@@ -167,10 +163,9 @@ struct WebSocketDatabaseTransportTests {
                 connection: connection
             )
         )
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 48,
-            target: .database,
             request: EmptyOperationPayload()
         )
 
@@ -184,10 +179,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("oversized response fails every pending request")
     func oversizedResponseIsRejected() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 42,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let response = Data(try successResponse(requestID: 42))
@@ -213,10 +207,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("text response is rejected")
     func textResponseIsRejected() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 43,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -257,10 +250,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("response wait is bounded by the configured request timeout")
     func responseWaitTimesOut() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 44,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -282,10 +274,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("transport rejects requests after explicit shutdown")
     func transportRejectsRequestsAfterShutdown() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 53,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(messages: [])
@@ -312,10 +303,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("shutdown cancels a pending request exactly once")
     func shutdownCancelsPendingRequest() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 54,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -343,10 +333,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("shutdown cancels an in-flight frame transmission")
     func shutdownCancelsInFlightFrameTransmission() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 55,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -377,10 +366,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("concurrent shutdown callers wait for the same completed boundary")
     func concurrentShutdownCallersWaitForCompletion() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 56,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -411,16 +399,14 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("a late cancelled response cannot fail another pending request")
     func lateCancelledResponseIsIsolated() async throws {
-        let firstCall = DatabaseCall(
+        let firstCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 45,
-            target: .database,
             request: EmptyOperationPayload()
         )
-        let secondCall = DatabaseCall(
+        let secondCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 46,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -461,16 +447,14 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("a late response is retired before cancellation joins the send task")
     func lateResponseIsRetiredBeforeJoiningSendTask() async throws {
-        let cancelledCall = DatabaseCall(
+        let cancelledCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 57,
-            target: .database,
             request: EmptyOperationPayload()
         )
-        let activeCall = DatabaseCall(
+        let activeCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 58,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -516,10 +500,9 @@ struct WebSocketDatabaseTransportTests {
 
     @Test("a cancelled request ID cannot be reused before its late response")
     func cancelledRequestIDCannotBeReused() async throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 49,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let connection = ScriptedDatabaseWebSocketConnection(
@@ -591,10 +574,9 @@ struct WebSocketDatabaseTransportTests {
             connector: connector
         )
 
-        let firstCall = DatabaseCall(
+        let firstCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 50,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let firstRequest = Task {
@@ -606,10 +588,9 @@ struct WebSocketDatabaseTransportTests {
             try await firstRequest.value
         }
 
-        let secondCall = DatabaseCall(
+        let secondCall = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 51,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let secondRequest = Task {

@@ -10,7 +10,9 @@ struct DatabaseClientTests {
     @Test("typed calls encode metadata and decode the matching response")
     func typedCallRoundTrips() async throws {
         let capturedIDs = Mutex<[UInt64]>([])
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         let capturedTargets = Mutex<[DatabaseOperationTarget]>([])
+        #endif
         let transport = ScriptedDatabaseTransport {
             bytes throws(DatabaseTransportError) in
             let request = try decodeRequest(
@@ -18,7 +20,9 @@ struct DatabaseClientTests {
                 from: bytes
             )
             capturedIDs.withLock { $0.append(request.requestID) }
+            #if DATABASE_CLIENT_MULTIPLE_BASES
             capturedTargets.withLock { $0.append(request.target) }
+            #endif
             if request.requestID == 1 {
                 #expect(request.metadata.traceID == "trace-a")
             } else {
@@ -31,6 +35,7 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         let baseID = try Base.ID("company-a")
         let compositionID = try Base.Composition.ID("shared-world")
 
@@ -48,11 +53,29 @@ struct DatabaseClientTests {
             DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
+        #else
+        let first = try await executeTestDatabaseOperation(
+            client: client,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
+            request: EmptyOperationPayload(),
+            metadata: OperationRequestMetadata(traceID: "trace-a")
+        )
+        let second = try await executeTestDatabaseOperation(
+            client: client,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
+            request: EmptyOperationPayload()
+        )
+        let third = try await client.database.execute(
+            DatabaseOperationCatalog.capabilitiesDescribe,
+            request: EmptyOperationPayload()
+        )
+        #endif
 
         #expect(first.runtimeVersion == "1")
         #expect(second.runtimeVersion == "1")
         #expect(third.runtimeVersion == "1")
         #expect(capturedIDs.withLock { $0 } == [1, 2, 3])
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         #expect(
             capturedTargets.withLock { $0 }
                 == [
@@ -61,6 +84,7 @@ struct DatabaseClientTests {
                     .composition(compositionID),
                 ]
         )
+        #endif
     }
 
     @Test("concurrent calls reserve unique identifiers without serializing transport I/O")
@@ -83,14 +107,14 @@ struct DatabaseClientTests {
         }
         let client = DatabaseClient(transport: transport)
 
-        async let first = client.execute(
-            DatabaseOperationCatalog.capabilitiesDescribe,
-            target: .database,
+        async let first = executeTestDatabaseOperation(
+            client: client,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
-        async let second = client.execute(
-            DatabaseOperationCatalog.capabilitiesDescribe,
-            target: .database,
+        async let second = executeTestDatabaseOperation(
+            client: client,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
         let responses = try await [first, second]
@@ -118,15 +142,15 @@ struct DatabaseClientTests {
             firstRequestID: UInt64.max
         )
 
-        _ = try await client.execute(
-            DatabaseOperationCatalog.capabilitiesDescribe,
-            target: .database,
+        _ = try await executeTestDatabaseOperation(
+            client: client,
+            operation: DatabaseOperationCatalog.capabilitiesDescribe,
             request: EmptyOperationPayload()
         )
         await #expect(throws: DatabaseClientError.requestIdentifierExhausted) {
-            _ = try await client.execute(
-                DatabaseOperationCatalog.capabilitiesDescribe,
-                target: .database,
+            _ = try await executeTestDatabaseOperation(
+                client: client,
+                operation: DatabaseOperationCatalog.capabilitiesDescribe,
                 request: EmptyOperationPayload()
             )
         }
@@ -140,10 +164,9 @@ struct DatabaseClientTests {
             message: "This operation requires the admin boundary",
             retryability: .never
         )
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.maintenanceExecute,
             requestID: 1,
-            target: .database,
             request: MaintenanceExecuteOperation.Request(
                 invocation: .compact
             )
@@ -166,9 +189,9 @@ struct DatabaseClientTests {
         await #expect(
             throws: DatabaseClientError.transport(.timeout)
         ) {
-            _ = try await client.execute(
-                DatabaseOperationCatalog.capabilitiesDescribe,
-                target: .database,
+            _ = try await executeTestDatabaseOperation(
+                client: client,
+                operation: DatabaseOperationCatalog.capabilitiesDescribe,
                 request: EmptyOperationPayload()
             )
         }
@@ -176,10 +199,9 @@ struct DatabaseClientTests {
 
     @Test("response correlation rejects a mismatched request identifier")
     func responseCorrelationRejectsMismatch() throws {
-        let call = DatabaseCall(
+        let call = makeTestDatabaseCall(
             operation: DatabaseOperationCatalog.capabilitiesDescribe,
             requestID: 8,
-            target: .database,
             request: EmptyOperationPayload()
         )
         let response = try encodeResponse(
@@ -200,10 +222,9 @@ struct DatabaseClientTests {
     @Test("job lifecycle preserves the exact job identity")
     func jobLifecyclePreservesIdentity() async throws {
         let jobOperation = JobOperations.maintenance
-        let job = JobIdentity(
+        let job = makeTestJobIdentity(
             jobID: UUID(high: 0x1111, low: 0x2222),
-            operation: jobOperation.identifier,
-            target: .database
+            operation: jobOperation.identifier
         )
         let statusResponse = try JobStatusOperation.Response(
             state: .running,
@@ -232,7 +253,9 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobStart,
                     from: bytes
                 )
+                #if DATABASE_CLIENT_MULTIPLE_BASES
                 #expect(request.target == job.target)
+                #endif
                 #expect(request.request.maximumSliceWorkUnits == 17)
                 #expect(request.request.operation == jobOperation.identifier)
                 return try encodeResponse(
@@ -245,7 +268,9 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobStatus,
                     from: bytes
                 )
+                #if DATABASE_CLIENT_MULTIPLE_BASES
                 #expect(request.target == job.target)
+                #endif
                 #expect(request.request.job == job)
                 return try encodeResponse(
                     DatabaseOperationCatalog.jobStatus,
@@ -257,7 +282,9 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobCancel,
                     from: bytes
                 )
+                #if DATABASE_CLIENT_MULTIPLE_BASES
                 #expect(request.target == job.target)
+                #endif
                 #expect(request.request.job == job)
                 return try encodeResponse(
                     DatabaseOperationCatalog.jobCancel,
@@ -294,6 +321,7 @@ struct DatabaseClientTests {
         )
     }
 
+    #if DATABASE_CLIENT_MULTIPLE_BASES
     @Test("job lifecycle rejects a job from another target before transport")
     func jobLifecycleRejectsAnotherTarget() async throws {
         let baseID = try Base.ID("company-a")
@@ -324,14 +352,14 @@ struct DatabaseClientTests {
         }
         #expect(transportInvocations.withLock { $0 } == 0)
     }
+    #endif
 
     @Test("paged job results verify integrity and decode the original response")
     func pagedJobResultDecodesOriginalResponse() async throws {
         let jobOperation = JobOperations.maintenance
-        let job = JobIdentity(
+        let job = makeTestJobIdentity(
             jobID: UUID(high: 0x1020, low: 0x3040),
-            operation: jobOperation.identifier,
-            target: .database
+            operation: jobOperation.identifier
         )
         let originalResponse = MaintenanceExecuteOperation.Response.execution(
             MaintenanceExecuteOperation.ExecutionResult(
@@ -354,9 +382,8 @@ struct DatabaseClientTests {
             let upperBound = payload.startIndex + boundaries[index + 1]
             return payload[lowerBound..<upperBound]
         }
-        var accumulator = JobResultDigestAccumulator(
-            operation: job.operation,
-            target: job.target
+        var accumulator = makeTestJobResultDigestAccumulator(
+            operation: job.operation
         )
         accumulator.update(payload)
         let digest = accumulator.finalize()
@@ -418,10 +445,9 @@ struct DatabaseClientTests {
     @Test("paged job results reject a mismatched digest")
     func pagedJobResultRejectsDigestMismatch() async throws {
         let jobOperation = JobOperations.maintenance
-        let job = JobIdentity(
+        let job = makeTestJobIdentity(
             jobID: UUID(high: 0x5060, low: 0x7080),
-            operation: jobOperation.identifier,
-            target: .database
+            operation: jobOperation.identifier
         )
         let originalResponse = MaintenanceExecuteOperation.Response.execution(
             MaintenanceExecuteOperation.ExecutionResult(
@@ -460,9 +486,8 @@ struct DatabaseClientTests {
         }
         let client = DatabaseClient(transport: transport)
         let database = client.database
-        var actualDigestAccumulator = JobResultDigestAccumulator(
-            operation: job.operation,
-            target: job.target
+        var actualDigestAccumulator = makeTestJobResultDigestAccumulator(
+            operation: job.operation
         )
         actualDigestAccumulator.update(payload)
         let actualDigest = actualDigestAccumulator.finalize()

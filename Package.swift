@@ -32,10 +32,19 @@ let package = Package(
             targets: ["DatabaseClientFramedStream"]
         ),
     ],
+    traits: [
+        .trait(name: "MultipleBases"),
+    ],
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.0812.1"
+            from: "26.0814.0",
+            traits: [
+                .trait(
+                    name: "MultipleBases",
+                    condition: .when(traits: ["MultipleBases"])
+                ),
+            ]
         ),
         .package(
             url: "https://github.com/1amageek/database-types.git",
@@ -54,7 +63,13 @@ let package = Package(
                 .product(name: "DatabaseKit", package: "database-kit"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
-            path: "Sources/DatabaseClient"
+            path: "Sources/DatabaseClient",
+            swiftSettings: [
+                .define(
+                    "DATABASE_CLIENT_MULTIPLE_BASES",
+                    .when(traits: ["MultipleBases"])
+                ),
+            ]
         ),
         .target(
             name: "DatabaseClientJavaScript",
@@ -111,6 +126,12 @@ let package = Package(
                     condition: .when(platforms: [.wasi])
                 ),
                 .product(name: "DatabaseWire", package: "database-kit"),
+            ],
+            swiftSettings: [
+                .define(
+                    "DATABASE_CLIENT_MULTIPLE_BASES",
+                    .when(traits: ["MultipleBases"])
+                ),
             ]
         ),
     ],

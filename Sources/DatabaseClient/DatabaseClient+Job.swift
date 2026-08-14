@@ -1,6 +1,6 @@
 import DatabaseWire
 
-public extension TargetedDatabaseClient {
+public extension DatabaseSessionClient {
     func startJob<Request: Sendable, Response: Sendable>(
         _ job: JobOperation<Request, Response>,
         request: Request,
@@ -10,6 +10,7 @@ public extension TargetedDatabaseClient {
     ) async throws(DatabaseClientError) -> JobIdentity {
         let startRequest: JobStartOperation.Request
         do {
+            #if DATABASE_CLIENT_MULTIPLE_BASES
             startRequest = try job.makeStartRequest(
                 request,
                 target: target,
@@ -17,6 +18,14 @@ public extension TargetedDatabaseClient {
                 retryPolicy: retryPolicy,
                 limits: limits
             )
+            #else
+            startRequest = try job.makeStartRequest(
+                request,
+                maximumSliceWorkUnits: maximumSliceWorkUnits,
+                retryPolicy: retryPolicy,
+                limits: limits
+            )
+            #endif
         } catch let error {
             throw .call(.wire(error))
         }
@@ -25,11 +34,18 @@ public extension TargetedDatabaseClient {
             request: startRequest,
             metadata: metadata
         )
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         let expectedJob = JobIdentity(
             jobID: response.job.jobID,
             operation: job.identifier,
             target: target
         )
+        #else
+        let expectedJob = JobIdentity(
+            jobID: response.job.jobID,
+            operation: job.identifier
+        )
+        #endif
         guard response.job == expectedJob else {
             throw .jobLifecycle(
                 .mismatchedJob(expected: expectedJob, actual: response.job)
@@ -80,6 +96,7 @@ public extension TargetedDatabaseClient {
     private func validateBoundJobTarget(
         _ job: JobIdentity
     ) throws(DatabaseClientError) {
+        #if DATABASE_CLIENT_MULTIPLE_BASES
         guard job.target == target else {
             throw .jobLifecycle(
                 .mismatchedJob(
@@ -92,5 +109,8 @@ public extension TargetedDatabaseClient {
                 )
             )
         }
+        #else
+        _ = job
+        #endif
     }
 }
