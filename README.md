@@ -205,3 +205,7 @@ The release gate uses the same source revision for all checks:
 `Package.swift` resolves `database-kit`, `database-types`, and JavaScriptKit from
 their published release tags. A checkout of another database repository next
 to this package is not part of the build contract.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
