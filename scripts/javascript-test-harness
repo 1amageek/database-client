@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly toolchain_identifier="org.swift.64202607231a"
-readonly default_swift_sdk="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm"
+readonly toolchain_identifier="org.swift.64202608141a"
+readonly default_swift_sdk="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm"
 readonly package_name="database-client"
 readonly expected_packaged_artifact="${package_name}PackageTests.xctest.wasm"
 readonly build_timeout_seconds="${JAVASCRIPT_TEST_BUILD_TIMEOUT_SECONDS:-600}"

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEME="database-client-Package"
 DESTINATION="platform=macOS,arch=arm64"
-EXPECTED_TEST_COUNT="${DATABASE_CLIENT_EXPECTED_TEST_COUNT:-48}"
+TEST_TRAITS="${DATABASE_CLIENT_TEST_TRAITS:-}"
 TOOLCHAIN_IDENTIFIER="org.swift.64202607231a"
 BUILD_TIMEOUT_SECONDS="${XCODE_TEST_BUILD_TIMEOUT_SECONDS:-1200}"
 TEST_TIMEOUT_SECONDS="${XCODE_TEST_TIMEOUT_SECONDS:-1200}"
@@ -121,7 +121,21 @@ summary_number() {
   printf '%s' "$summary" | jq -er ".${key}"
 }
 
-for command in jq xcodebuild xcrun plutil perl rg tee; do
+case "$TEST_TRAITS" in
+  "")
+    default_expected_test_count=48
+    ;;
+  "MultipleBases")
+    default_expected_test_count=51
+    ;;
+  *)
+    echo "error: DATABASE_CLIENT_TEST_TRAITS must be empty or MultipleBases" >&2
+    exit 2
+    ;;
+esac
+EXPECTED_TEST_COUNT="${DATABASE_CLIENT_EXPECTED_TEST_COUNT:-$default_expected_test_count}"
+
+for command in jq xcodebuild xcrun plutil perl rg rsync tee; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "error: required command not found: $command" >&2
     exit 1
@@ -153,6 +167,22 @@ else
 fi
 derived_data="$WORK_ROOT/DerivedData"
 mkdir -p "$derived_data" "$RESULT_DIRECTORY"
+build_root="$ROOT_DIR"
+if [[ -n "$TEST_TRAITS" ]]; then
+  source_root="$WORK_ROOT/source"
+  mkdir -p "$source_root"
+  rsync -a --delete \
+    --exclude '.git' \
+    --exclude '.build' \
+    --exclude '.swiftpm' \
+    --exclude '*.xcresult' \
+    "$ROOT_DIR/" "$source_root/"
+  perl -0pi -e '
+    my $insertions = s/(\n    traits: \[\n)/$1        .default(enabledTraits: ["MultipleBases"]),\n/s;
+    die "package trait list was not found\n" unless $insertions == 1;
+  ' "$source_root/Package.swift"
+  build_root="$source_root"
+fi
 run_identifier="$(date -u +%Y%m%d-%H%M%S)-$$"
 build_result="$RESULT_DIRECTORY/Build-$run_identifier.xcresult"
 test_result="$RESULT_DIRECTORY/Test-$run_identifier.xcresult"
@@ -161,11 +191,12 @@ test_log="$RESULT_DIRECTORY/Test-$run_identifier.log"
 
 set +e
 (
-  cd "$ROOT_DIR"
+  cd "$build_root"
   timeout_command "$BUILD_TIMEOUT_SECONDS" xcodebuild build-for-testing \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -derivedDataPath "$derived_data" \
+    -clonedSourcePackagesDirPath "$WORK_ROOT/SourcePackages" \
     -resultBundlePath "$build_result" \
     -enableCodeCoverage NO \
     -onlyUsePackageVersionsFromResolvedFile \
@@ -229,4 +260,5 @@ fi
 
 printf '%s\n' "$summary"
 echo "database-client tests: $passed_count passed"
+echo "Additional traits: ${TEST_TRAITS:-none}"
 echo "Result directory: $RESULT_DIRECTORY"

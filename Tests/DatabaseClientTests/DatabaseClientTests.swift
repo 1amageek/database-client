@@ -81,11 +81,71 @@ struct DatabaseClientTests {
                 == [
                     .database,
                     .base(baseID),
-                    .composition(compositionID),
+                    .composition(.named(compositionID)),
                 ]
         )
         #endif
     }
+
+    #if DATABASE_CLIENT_MULTIPLE_BASES
+    @Test("derived Composition sends one canonical target")
+    func derivedCompositionSendsCanonicalTarget() async throws {
+        let companyBaseID = try Base.ID("company-a")
+        let worldBaseID = try Base.ID("world")
+        let capturedTarget = Mutex<DatabaseOperationTarget?>(nil)
+        let transport = ScriptedDatabaseTransport {
+            bytes throws(DatabaseTransportError) in
+            let request = try decodeRequest(
+                DatabaseOperationCatalog.capabilitiesDescribe,
+                from: bytes
+            )
+            capturedTarget.withLock { $0 = request.target }
+            return try encodeResponse(
+                DatabaseOperationCatalog.capabilitiesDescribe,
+                requestID: request.requestID,
+                response: capabilitiesResponse()
+            )
+        }
+        let client = DatabaseClient(transport: transport)
+
+        let response = try await client.composition(
+            bases: [worldBaseID, companyBaseID]
+        ).execute(
+            DatabaseOperationCatalog.capabilitiesDescribe,
+            request: EmptyOperationPayload()
+        )
+        let expectedSelection = try CompositionSelection.derived([
+            companyBaseID,
+            worldBaseID,
+        ])
+
+        #expect(response.runtimeVersion == "1")
+        #expect(
+            capturedTarget.withLock { $0 }
+                == .composition(expectedSelection)
+        )
+    }
+
+    @Test("derived Composition rejects invalid Base sets before transport")
+    func derivedCompositionRejectsInvalidBaseSets() throws {
+        let transportInvocationCount = Mutex(0)
+        let transport = ScriptedDatabaseTransport {
+            _ throws(DatabaseTransportError) in
+            transportInvocationCount.withLock { $0 += 1 }
+            throw DatabaseTransportError.timeout
+        }
+        let client = DatabaseClient(transport: transport)
+        let baseID = try Base.ID("company-a")
+
+        #expect(throws: BaseCompositionError.empty) {
+            _ = try client.composition(bases: [])
+        }
+        #expect(throws: BaseCompositionError.duplicateBase(baseID)) {
+            _ = try client.composition(bases: [baseID, baseID])
+        }
+        #expect(transportInvocationCount.withLock { $0 } == 0)
+    }
+    #endif
 
     @Test("concurrent calls reserve unique identifiers without serializing transport I/O")
     func concurrentCallsRemainIndependent() async throws {

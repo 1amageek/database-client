@@ -74,7 +74,10 @@ not construct a synthetic `.database` target.
 The non-default `MultipleBases` trait adds the target-bound
 `DatabaseSessionClient` surface. In that graph, use `client.database` for the
 control domain, `client.base(baseID)` for one Base, and
-`client.composition(compositionID)` for a read-only Composition. Only that
+`client.composition(compositionID)` for a named read-only Composition, or
+`try client.composition(bases:)` for a request-scoped derived Composition.
+Neither client API creates query semantics; both select the canonical target
+consumed by the framework behind the remote endpoint. Only that
 trait-enabled graph exposes `DatabaseOperationTarget`.
 
 ```swift
@@ -182,9 +185,9 @@ Frame limits use fixed-width comparisons and remain valid on 32-bit WASI.
 Pin the compiler and SDK to the same Swift snapshot. For the currently validated snapshot:
 
 ```bash
-/Users/1amageek/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a.xctoolchain/usr/bin/swift \
+/Users/1amageek/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a.xctoolchain/usr/bin/swift \
   build \
-  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm-embedded \
+  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm-embedded \
   --product DatabaseClient
 ```
 
@@ -196,8 +199,8 @@ The release gate uses the same source revision for all checks:
 | Target | Required result |
 | --- | --- |
 | Native macOS, standard | 48 passed; zero failures, skips, expected failures, or runtime warnings |
-| Native macOS, `MultipleBases` | 49 passed with `DATABASE_CLIENT_EXPECTED_TEST_COUNT=49`; zero failures, skips, expected failures, or runtime warnings |
-| JavaScript/WASI on Node | 27 passed; zero failures or skips; normal Swift Testing process termination |
+| Native macOS, `MultipleBases` | 51 passed with `DATABASE_CLIENT_TEST_TRAITS=MultipleBases`; zero failures, skips, expected failures, or runtime warnings |
+| JavaScript/WASI on Node | 26 passed; zero failures or skips; normal Swift Testing process termination |
 | Embedded WASM `DatabaseClient` | Product compiles and links with the pinned Embedded SDK |
 
 ## Versioned dependencies

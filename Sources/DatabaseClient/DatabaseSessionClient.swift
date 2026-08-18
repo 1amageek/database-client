@@ -65,7 +65,13 @@ public extension DatabaseClient {
     func composition(
         _ id: Base.Composition.ID
     ) -> DatabaseSessionClient<Transport> {
-        targeting(.composition(id))
+        targeting(.composition(.named(id)))
+    }
+
+    func composition(
+        bases: [Base.ID]
+    ) throws(BaseCompositionError) -> DatabaseSessionClient<Transport> {
+        targeting(.composition(try .derived(bases)))
     }
 
     func targeting(
