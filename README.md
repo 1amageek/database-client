@@ -71,7 +71,7 @@ The default client is target-free because the default runtime has one database
 execution root. `DatabaseClient.execute` sends that operation directly; it does
 not construct a synthetic `.database` target.
 
-The non-default `MultipleBases` trait adds the target-bound
+The non-default `MultiBase` trait adds the target-bound
 `DatabaseSessionClient` surface. In that graph, use `client.database` for the
 control domain, `client.base(baseID)` for one Base, and
 `client.composition(compositionID)` for a named read-only Composition, or
@@ -199,7 +199,7 @@ The release gate uses the same source revision for all checks:
 | Target | Required result |
 | --- | --- |
 | Native macOS, standard | 48 passed; zero failures, skips, expected failures, or runtime warnings |
-| Native macOS, `MultipleBases` | 51 passed with `DATABASE_CLIENT_TEST_TRAITS=MultipleBases`; zero failures, skips, expected failures, or runtime warnings |
+| Native macOS, `MultiBase` | 51 passed with `DATABASE_CLIENT_TEST_TRAITS=MultiBase`; zero failures, skips, expected failures, or runtime warnings |
 | JavaScript/WASI on Node | 26 passed; zero failures or skips; normal Swift Testing process termination |
 | Embedded WASM `DatabaseClient` | Product compiles and links with the pinned Embedded SDK |
 

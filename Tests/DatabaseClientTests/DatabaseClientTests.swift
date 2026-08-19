@@ -10,7 +10,7 @@ struct DatabaseClientTests {
     @Test("typed calls encode metadata and decode the matching response")
     func typedCallRoundTrips() async throws {
         let capturedIDs = Mutex<[UInt64]>([])
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         let capturedTargets = Mutex<[DatabaseOperationTarget]>([])
         #endif
         let transport = ScriptedDatabaseTransport {
@@ -20,7 +20,7 @@ struct DatabaseClientTests {
                 from: bytes
             )
             capturedIDs.withLock { $0.append(request.requestID) }
-            #if DATABASE_CLIENT_MULTIPLE_BASES
+            #if DATABASE_CLIENT_MULTI_BASE
             capturedTargets.withLock { $0.append(request.target) }
             #endif
             if request.requestID == 1 {
@@ -35,7 +35,7 @@ struct DatabaseClientTests {
             )
         }
         let client = DatabaseClient(transport: transport)
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         let baseID = try Base.ID("company-a")
         let compositionID = try Base.Composition.ID("shared-world")
 
@@ -75,7 +75,7 @@ struct DatabaseClientTests {
         #expect(second.runtimeVersion == "1")
         #expect(third.runtimeVersion == "1")
         #expect(capturedIDs.withLock { $0 } == [1, 2, 3])
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         #expect(
             capturedTargets.withLock { $0 }
                 == [
@@ -87,7 +87,7 @@ struct DatabaseClientTests {
         #endif
     }
 
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     @Test("derived Composition sends one canonical target")
     func derivedCompositionSendsCanonicalTarget() async throws {
         let companyBaseID = try Base.ID("company-a")
@@ -313,7 +313,7 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobStart,
                     from: bytes
                 )
-                #if DATABASE_CLIENT_MULTIPLE_BASES
+                #if DATABASE_CLIENT_MULTI_BASE
                 #expect(request.target == job.target)
                 #endif
                 #expect(request.request.maximumSliceWorkUnits == 17)
@@ -328,7 +328,7 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobStatus,
                     from: bytes
                 )
-                #if DATABASE_CLIENT_MULTIPLE_BASES
+                #if DATABASE_CLIENT_MULTI_BASE
                 #expect(request.target == job.target)
                 #endif
                 #expect(request.request.job == job)
@@ -342,7 +342,7 @@ struct DatabaseClientTests {
                     DatabaseOperationCatalog.jobCancel,
                     from: bytes
                 )
-                #if DATABASE_CLIENT_MULTIPLE_BASES
+                #if DATABASE_CLIENT_MULTI_BASE
                 #expect(request.target == job.target)
                 #endif
                 #expect(request.request.job == job)
@@ -381,7 +381,7 @@ struct DatabaseClientTests {
         )
     }
 
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     @Test("job lifecycle rejects a job from another target before transport")
     func jobLifecycleRejectsAnotherTarget() async throws {
         let baseID = try Base.ID("company-a")

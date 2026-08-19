@@ -27,7 +27,7 @@ public final class DatabaseClient<Transport: DatabaseTransport>: Sendable {
         self.nextRequestID = Atomic(firstRequestID)
     }
 
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     public final func execute<Request: Sendable, Response: Sendable>(
         _ operation: DatabaseOperation<Request, Response>,
         target: DatabaseOperationTarget,

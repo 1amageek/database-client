@@ -33,16 +33,16 @@ let package = Package(
         ),
     ],
     traits: [
-        .trait(name: "MultipleBases"),
+        .trait(name: "MultiBase"),
     ],
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.0818.0",
+            from: "26.0819.0",
             traits: [
                 .trait(
-                    name: "MultipleBases",
-                    condition: .when(traits: ["MultipleBases"])
+                    name: "MultiBase",
+                    condition: .when(traits: ["MultiBase"])
                 ),
             ]
         ),
@@ -66,8 +66,8 @@ let package = Package(
             path: "Sources/DatabaseClient",
             swiftSettings: [
                 .define(
-                    "DATABASE_CLIENT_MULTIPLE_BASES",
-                    .when(traits: ["MultipleBases"])
+                    "DATABASE_CLIENT_MULTI_BASE",
+                    .when(traits: ["MultiBase"])
                 ),
             ]
         ),
@@ -129,8 +129,8 @@ let package = Package(
             ],
             swiftSettings: [
                 .define(
-                    "DATABASE_CLIENT_MULTIPLE_BASES",
-                    .when(traits: ["MultipleBases"])
+                    "DATABASE_CLIENT_MULTI_BASE",
+                    .when(traits: ["MultiBase"])
                 ),
             ]
         ),

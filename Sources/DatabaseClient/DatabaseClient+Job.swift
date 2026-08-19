@@ -10,7 +10,7 @@ public extension DatabaseSessionClient {
     ) async throws(DatabaseClientError) -> JobIdentity {
         let startRequest: JobStartOperation.Request
         do {
-            #if DATABASE_CLIENT_MULTIPLE_BASES
+            #if DATABASE_CLIENT_MULTI_BASE
             startRequest = try job.makeStartRequest(
                 request,
                 target: target,
@@ -34,7 +34,7 @@ public extension DatabaseSessionClient {
             request: startRequest,
             metadata: metadata
         )
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         let expectedJob = JobIdentity(
             jobID: response.job.jobID,
             operation: job.identifier,
@@ -96,7 +96,7 @@ public extension DatabaseSessionClient {
     private func validateBoundJobTarget(
         _ job: JobIdentity
     ) throws(DatabaseClientError) {
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         guard job.target == target else {
             throw .jobLifecycle(
                 .mismatchedJob(

@@ -8,7 +8,7 @@ func makeTestDatabaseCall<Request: Sendable, Response: Sendable>(
     metadata: OperationRequestMetadata = OperationRequestMetadata(),
     request: Request
 ) -> DatabaseCall<Request, Response> {
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     DatabaseCall(
         operation: operation,
         requestID: requestID,
@@ -36,7 +36,7 @@ func executeTestDatabaseOperation<
     request: Request,
     metadata: OperationRequestMetadata = OperationRequestMetadata()
 ) async throws(DatabaseClientError) -> Response {
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     try await client.execute(
         operation,
         target: .database,
@@ -56,7 +56,7 @@ func makeTestJobIdentity(
     jobID: DatabaseTypes.UUID,
     operation: JobOperationIdentifier
 ) -> JobIdentity {
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     JobIdentity(jobID: jobID, operation: operation, target: .database)
     #else
     JobIdentity(jobID: jobID, operation: operation)
@@ -66,7 +66,7 @@ func makeTestJobIdentity(
 func makeTestJobResultDigestAccumulator(
     operation: JobOperationIdentifier
 ) -> JobResultDigestAccumulator {
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     JobResultDigestAccumulator(operation: operation, target: .database)
     #else
     JobResultDigestAccumulator(operation: operation)

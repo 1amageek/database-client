@@ -6,13 +6,13 @@ public import DatabaseWire
 /// Reusing this value for job status, result, and cancellation preserves the
 /// exact target selected when the job was created.
 public struct DatabaseSessionClient<Transport: DatabaseTransport>: Sendable {
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     public let target: DatabaseOperationTarget
     #endif
     let client: DatabaseClient<Transport>
     var limits: DatabaseWireLimits { client.limits }
 
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     init(
         client: DatabaseClient<Transport>,
         target: DatabaseOperationTarget
@@ -31,7 +31,7 @@ public struct DatabaseSessionClient<Transport: DatabaseTransport>: Sendable {
         request: Request,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> Response {
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         try await client.execute(
             operation,
             target: target,
@@ -50,14 +50,14 @@ public struct DatabaseSessionClient<Transport: DatabaseTransport>: Sendable {
 
 public extension DatabaseClient {
     var database: DatabaseSessionClient<Transport> {
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         targeting(.database)
         #else
         DatabaseSessionClient(client: self)
         #endif
     }
 
-    #if DATABASE_CLIENT_MULTIPLE_BASES
+    #if DATABASE_CLIENT_MULTI_BASE
     func base(_ id: Base.ID) -> DatabaseSessionClient<Transport> {
         targeting(.base(id))
     }

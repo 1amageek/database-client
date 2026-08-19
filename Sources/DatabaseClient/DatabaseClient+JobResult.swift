@@ -9,7 +9,7 @@ public extension DatabaseSessionClient {
         using operation: JobOperation<Request, Response>,
         metadata: OperationRequestMetadata = OperationRequestMetadata()
     ) async throws(DatabaseClientError) -> Response {
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         guard job.operation == operation.identifier,
               job.target == target else {
             throw .jobResult(
@@ -42,7 +42,7 @@ public extension DatabaseSessionClient {
         var expectedContinuationIndex: UInt32 = 1
         var receivedByteCount: UInt64 = 0
         var responseBytes: [UInt8] = []
-        #if DATABASE_CLIENT_MULTIPLE_BASES
+        #if DATABASE_CLIENT_MULTI_BASE
         var digestAccumulator = JobResultDigestAccumulator(
             operation: job.operation,
             target: job.target
