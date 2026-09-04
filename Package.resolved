@@ -1,13 +1,13 @@
 {
-  "originHash" : "72a391494a62fc9975fb78eef62b8bac512dd6074bc0104194a629b2618125ce",
+  "originHash" : "7c5aba527b6f322c5d51167415c466c7dd2e2899b1323321d5ede403105dcc5c",
   "pins" : [
     {
       "identity" : "database-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/database-kit.git",
       "state" : {
-        "revision" : "775facbae56d8ccbbf7024d40a8fb36da64093c2",
-        "version" : "26.819.0"
+        "revision" : "7492a39d5040bd83730a7cd84ed8de62b3f4741e",
+        "version" : "26.831.1"
       }
     },
     {
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/1amageek/database-types.git",
       "state" : {
-        "revision" : "4b0c81a9c322cbfa5628e411ee1fa931c2890e5d",
-        "version" : "26.730.0"
+        "revision" : "d075edcb37f8a7be845c5be4d6a7a226d899505b",
+        "version" : "26.831.0"
       }
     },
     {
@@ -31,7 +31,7 @@
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "location" : "https://github.com/swiftlang/swift-syntax",
       "state" : {
         "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
         "version" : "603.0.2"
