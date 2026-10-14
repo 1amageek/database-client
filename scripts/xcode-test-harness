@@ -6,12 +6,63 @@ SCHEME="database-client-Package"
 DESTINATION="platform=macOS,arch=arm64"
 TEST_TRAITS="${DATABASE_CLIENT_TEST_TRAITS:-}"
 TOOLCHAIN_IDENTIFIER="org.swift.64202608141a"
+EXPECTED_SWIFT_SNAPSHOT="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a"
+EXPECTED_SWIFT_COMPILER_COMMIT="424cae54c1a10da"
+XCODE_TOOLCHAIN_IDENTIFIER="com.apple.dt.toolchain.XcodeDefault"
 BUILD_TIMEOUT_SECONDS="${XCODE_TEST_BUILD_TIMEOUT_SECONDS:-1200}"
+BUILD_JOB_COUNT="${XCODE_TEST_BUILD_JOBS:-6}"
 TEST_TIMEOUT_SECONDS="${XCODE_TEST_TIMEOUT_SECONDS:-1200}"
 RESULT_DIRECTORY="${XCODE_TEST_RESULT_DIRECTORY:-${TMPDIR:-/tmp}/database-client-xcode-results}"
 REQUESTED_WORK_ROOT="${XCODE_TEST_WORK_ROOT:-}"
 WORK_ROOT=""
 OWNS_WORK_ROOT=false
+ONLY_TESTING=()
+EXPECTED_TEST_COUNT=""
+DIAGNOSTIC_SOURCE_ROOT=""
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/xcode-test-harness [options]
+  --only-testing <identifier>  Select target, suite, or method. Repeatable.
+  --expected-count <count>     Required exact positive count for focused tests.
+  --diagnostic-source-root <path>
+                              Copy prepared sources with absolute local Kit
+                              dependencies; diagnostic evidence only.
+  -h, --help                  Show this help.
+EOF
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --only-testing|--expected-count|--diagnostic-source-root)
+      if [[ -z "${2:-}" || "$2" == --* ]]; then
+        echo "error: $1 requires a value" >&2
+        exit 2
+      fi
+      case "$1" in
+        --only-testing) ONLY_TESTING+=("-only-testing:$2") ;;
+        --expected-count) EXPECTED_TEST_COUNT="$2" ;;
+        --diagnostic-source-root) DIAGNOSTIC_SOURCE_ROOT="$2" ;;
+      esac
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+if (( ${#ONLY_TESTING[@]} > 0 )); then
+  if ! [[ "$EXPECTED_TEST_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: focused tests require --expected-count with a positive integer" >&2
+    exit 2
+  fi
+elif [[ -n "$EXPECTED_TEST_COUNT" ]]; then
+  echo "error: --expected-count requires --only-testing; full counts are package-owned" >&2
+  exit 2
+fi
+if [[ -n "${DATABASE_CLIENT_EXPECTED_TEST_COUNT:-}" ]]; then
+  echo "error: use --only-testing with --expected-count; full counts are package-owned" >&2
+  exit 2
+fi
 
 timeout_command() {
   local seconds="$1"
@@ -20,17 +71,22 @@ timeout_command() {
 }
 
 cleanup() {
+  local status=$?
+  if [[ -n "${original_package_digest:-}" ]]; then
+    verify_source_files || status=1
+  fi
   if [[ "$OWNS_WORK_ROOT" != true \
       || -z "$WORK_ROOT" \
       || ! -d "$WORK_ROOT" ]]; then
-    return
+    exit "$status"
   fi
   local expected_prefix="${TMPDIR:-/tmp}/database-client-xcode-test."
   if [[ "$WORK_ROOT" != "$expected_prefix"* ]]; then
     echo "error: refusing to remove unexpected harness path: $WORK_ROOT" >&2
-    return
+    exit 1
   fi
   rm -rf -- "$WORK_ROOT"
+  exit "$status"
 }
 
 trap cleanup EXIT
@@ -115,6 +171,54 @@ reject_internal_tool_errors() {
   fi
 }
 
+verify_pinned_toolchain() {
+  local toolchain_root toolchain_name compiler_version
+  PINNED_SWIFTC="$(xcrun --toolchain "$TOOLCHAIN_IDENTIFIER" --find swiftc)"
+  toolchain_root="$(cd "$(dirname "$PINNED_SWIFTC")/../.." && pwd)"
+  toolchain_name="${toolchain_root##*/}"
+  toolchain_name="${toolchain_name%.xctoolchain}"
+  if [[ "$toolchain_name" != "$EXPECTED_SWIFT_SNAPSHOT" ]]; then
+    echo "error: expected Swift snapshot $EXPECTED_SWIFT_SNAPSHOT, found $toolchain_name" >&2
+    return 1
+  fi
+  compiler_version="$(xcrun --toolchain "$TOOLCHAIN_IDENTIFIER" swiftc --version)"
+  if ! printf '%s\n' "$compiler_version" | rg -F "Swift $EXPECTED_SWIFT_COMPILER_COMMIT" >/dev/null; then
+    echo "error: expected Swift compiler commit $EXPECTED_SWIFT_COMPILER_COMMIT" >&2
+    printf '%s\n' "$compiler_version" >&2
+    return 1
+  fi
+  printf '%s\n' "$compiler_version"
+}
+
+verify_source_files() {
+  if [[ "$(shasum -a 256 "$ROOT_DIR/Package.swift")" != "$original_package_digest" \
+      || "$(shasum -a 256 "$ROOT_DIR/Package.resolved")" != "$original_resolved_digest" \
+      || "$(shasum -a 256 "$input_root/Package.swift")" != "$input_package_digest" \
+      || "$(shasum -a 256 "$input_root/Package.resolved")" != "$input_resolved_digest" ]]; then
+    echo "error: source Package.swift or Package.resolved changed during verification" >&2
+    return 1
+  fi
+}
+
+verify_pins() {
+  if [[ "$verification_mode" == "url" ]]; then
+    if ! cmp -s "$locked_resolved" "$build_root/Package.resolved"; then
+      echo "error: dependency resolution changed the pinned package graph" >&2
+      return 1
+    fi
+  else
+    local projection='[.pins[] | select(.identity as $id | $locals | index($id) | not) | {identity, kind, location, state}] | sort_by(.identity)'
+    jq -S --argjson locals "$local_identities" "$projection" "$ROOT_DIR/Package.resolved" > "$WORK_ROOT/.original-url-pins"
+    jq -S --argjson locals "$local_identities" "$projection" "$locked_resolved" > "$WORK_ROOT/.locked-url-pins"
+    jq -S --argjson locals "$local_identities" "$projection" "$build_root/Package.resolved" > "$WORK_ROOT/.resolved-url-pins"
+    if ! cmp -s "$WORK_ROOT/.original-url-pins" "$WORK_ROOT/.locked-url-pins" \
+        || ! cmp -s "$WORK_ROOT/.locked-url-pins" "$WORK_ROOT/.resolved-url-pins"; then
+      echo "error: diagnostic resolution changed a URL dependency pin" >&2
+      return 1
+    fi
+  fi
+}
+
 summary_number() {
   local summary="$1"
   local key="$2"
@@ -123,33 +227,103 @@ summary_number() {
 
 case "$TEST_TRAITS" in
   "")
-    default_expected_test_count=48
+    default_expected_test_count=51
     ;;
   "MultiBase")
-    default_expected_test_count=51
+    default_expected_test_count=54
     ;;
   *)
     echo "error: DATABASE_CLIENT_TEST_TRAITS must be empty or MultiBase" >&2
     exit 2
     ;;
 esac
-EXPECTED_TEST_COUNT="${DATABASE_CLIENT_EXPECTED_TEST_COUNT:-$default_expected_test_count}"
+EXPECTED_TEST_COUNT="${EXPECTED_TEST_COUNT:-$default_expected_test_count}"
 
-for command in jq xcodebuild xcrun plutil perl rg rsync tee; do
+for command in cmp jq xcodebuild xcrun plutil perl rg rsync shasum tee; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "error: required command not found: $command" >&2
     exit 1
   fi
 done
 
-if ! [[ "$EXPECTED_TEST_COUNT" =~ ^[0-9]+$ ]]; then
-  echo "error: DATABASE_CLIENT_EXPECTED_TEST_COUNT must be a non-negative integer" >&2
+if ! [[ "$BUILD_JOB_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: XCODE_TEST_BUILD_JOBS must be a positive integer" >&2
   exit 2
 fi
 
-export TOOLCHAINS="$TOOLCHAIN_IDENTIFIER"
-xcrun --toolchain "$TOOLCHAIN_IDENTIFIER" swift --version
+for timeout_value in "$BUILD_TIMEOUT_SECONDS" "$TEST_TIMEOUT_SECONDS"; do
+  if ! [[ "$timeout_value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: build and test timeouts must be positive integers" >&2
+    exit 2
+  fi
+done
+
+verify_pinned_toolchain
 xcodebuild -version
+if rg -U -n '\.package\(\s*path:' "$ROOT_DIR/Package.swift" >/dev/null \
+    || rg -n '\.default\s*\(' "$ROOT_DIR/Package.swift" >/dev/null; then
+  echo "error: source manifest must retain URL dependencies and intended default traits" >&2
+  exit 2
+fi
+if [[ ! -f "$ROOT_DIR/Package.resolved" ]]; then
+  echo "error: source Package.resolved is required" >&2
+  exit 2
+fi
+input_root="$ROOT_DIR"
+verification_mode="url"
+local_identities='[]'
+local_paths=""
+if [[ -n "$DIAGNOSTIC_SOURCE_ROOT" ]]; then
+  if [[ "$DIAGNOSTIC_SOURCE_ROOT" != /* || ! -d "$DIAGNOSTIC_SOURCE_ROOT" ]]; then
+    echo "error: diagnostic source root must be an existing absolute path" >&2
+    exit 2
+  fi
+  input_root="$(cd "$DIAGNOSTIC_SOURCE_ROOT" && pwd -P)"
+  if [[ "$input_root" == "$(cd "$ROOT_DIR" && pwd -P)" \
+      || ! -f "$input_root/Package.swift" || ! -f "$input_root/Package.resolved" ]]; then
+    echo "error: diagnostic source must be a separate prepared package with pins" >&2
+    exit 2
+  fi
+  local_paths="$(perl -0777 -ne 'while (/\.package\(\s*path:\s*"([^"\\]+)"/g) { print "$1\n"; }' "$input_root/Package.swift")"
+  if [[ -z "$local_paths" ]]; then
+    echo "error: diagnostic source requires absolute .package(path:) dependencies" >&2
+    exit 2
+  fi
+  local_names=()
+  while IFS= read -r dependency_path; do
+    if [[ "$dependency_path" != /* || ! -f "$dependency_path/Package.swift" ]]; then
+      echo "error: diagnostic dependency must be an absolute package root: $dependency_path" >&2
+      exit 2
+    fi
+    dependency_root="$(cd "$dependency_path" && pwd -P)"
+    local_names+=("$(basename "$dependency_root" | tr '[:upper:]' '[:lower:]')")
+  done <<< "$local_paths"
+  local_identities="$(printf '%s\n' "${local_names[@]}" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')"
+  if ! jq -e 'index("database-kit") != null' <<< "$local_identities" >/dev/null; then
+    echo "error: diagnostic graph must select an absolute local database-kit package" >&2
+    exit 2
+  fi
+  # Changing only dependency origins must preserve conditional trait forwarding.
+  for manifest in "$ROOT_DIR/Package.swift" "$input_root/Package.swift"; do
+    forwarded_traits="$(perl -0777 -ne 'while (/(\.trait\(\s*name:\s*"[^"]+",\s*condition:\s*\.when\(traits:\s*\[[^\]]*\]\)\s*\))/g) { my $value = $1; $value =~ s/\s+//g; print "$value\n"; }' "$manifest")"
+    if [[ "$manifest" == "$ROOT_DIR/Package.swift" ]]; then
+      original_forwarded_traits="$forwarded_traits"
+    elif [[ "$forwarded_traits" != "$original_forwarded_traits" ]]; then
+      echo "error: diagnostic manifest changed conditional dependency traits" >&2
+      exit 2
+    fi
+  done
+  verification_mode="diagnostic-local"
+fi
+if rg -n '\.default\s*\(' "$input_root/Package.swift" >/dev/null; then
+  echo "error: prepared sources must not enable a default trait; use DATABASE_CLIENT_TEST_TRAITS" >&2
+  exit 2
+fi
+original_resolved_digest="$(shasum -a 256 "$ROOT_DIR/Package.resolved")"
+input_package_digest="$(shasum -a 256 "$input_root/Package.swift")"
+input_resolved_digest="$(shasum -a 256 "$input_root/Package.resolved")"
+original_package_digest="$(shasum -a 256 "$ROOT_DIR/Package.swift")"
+echo "Verification mode: $verification_mode (diagnostic-local is not URL final evidence)"
 
 if [[ -n "$REQUESTED_WORK_ROOT" ]]; then
   case "$REQUESTED_WORK_ROOT" in
@@ -167,32 +341,71 @@ else
 fi
 derived_data="$WORK_ROOT/DerivedData"
 mkdir -p "$derived_data" "$RESULT_DIRECTORY"
-build_root="$ROOT_DIR"
+source_root="$WORK_ROOT/source"
+mkdir -p "$source_root"
+rsync -a --delete \
+  --exclude '.git' --exclude '.build' --exclude '.swiftpm' --exclude '*.xcresult' \
+  "$input_root/" "$source_root/"
+build_root="$source_root"
+locked_resolved="$WORK_ROOT/Package.resolved"
+cp "$input_root/Package.resolved" "$locked_resolved"
 if [[ -n "$TEST_TRAITS" ]]; then
-  source_root="$WORK_ROOT/source"
-  mkdir -p "$source_root"
-  rsync -a --delete \
-    --exclude '.git' \
-    --exclude '.build' \
-    --exclude '.swiftpm' \
-    --exclude '*.xcresult' \
-    "$ROOT_DIR/" "$source_root/"
   perl -0pi -e '
     my $insertions = s/(\n    traits: \[\n)/$1        .default(enabledTraits: ["MultiBase"]),\n/s;
     die "package trait list was not found\n" unless $insertions == 1;
-  ' "$source_root/Package.swift"
-  build_root="$source_root"
+  ' "$build_root/Package.swift"
+fi
+resolve_version_flags=(-onlyUsePackageVersionsFromResolvedFile)
+if [[ "$verification_mode" == "diagnostic-local" ]]; then
+  resolve_version_flags=()
 fi
 run_identifier="$(date -u +%Y%m%d-%H%M%S)-$$"
 build_result="$RESULT_DIRECTORY/Build-$run_identifier.xcresult"
 test_result="$RESULT_DIRECTORY/Test-$run_identifier.xcresult"
+resolve_log="$RESULT_DIRECTORY/Resolve-$run_identifier.log"
 build_log="$RESULT_DIRECTORY/Build-$run_identifier.log"
 test_log="$RESULT_DIRECTORY/Test-$run_identifier.log"
 
 set +e
 (
   cd "$build_root"
-  timeout_command "$BUILD_TIMEOUT_SECONDS" xcodebuild build-for-testing \
+  timeout_command "$BUILD_TIMEOUT_SECONDS" env TOOLCHAINS="$XCODE_TOOLCHAIN_IDENTIFIER" \
+    xcodebuild -resolvePackageDependencies \
+    -scheme "$SCHEME" -derivedDataPath "$derived_data" \
+    -clonedSourcePackagesDirPath "$WORK_ROOT/SourcePackages" \
+    ${resolve_version_flags[@]+"${resolve_version_flags[@]}"} \
+    SWIFT_EXEC="$PINNED_SWIFTC" \
+    2>&1 | tee "$resolve_log"
+)
+resolve_status=$?
+set -e
+reject_internal_tool_errors "$resolve_log"
+if (( resolve_status != 0 )); then
+  echo "error: dependency resolution exited with status $resolve_status" >&2
+  exit "$resolve_status"
+fi
+verify_pins
+verify_source_files
+cp "$build_root/Package.resolved" "$RESULT_DIRECTORY/Resolved-$run_identifier.json"
+{
+  echo "Verification mode: $verification_mode"
+  echo "Additional traits: ${TEST_TRAITS:-none}"
+  echo "Toolchain: $TOOLCHAIN_IDENTIFIER ($EXPECTED_SWIFT_COMPILER_COMMIT)"
+  echo "Compiler: $PINNED_SWIFTC"
+  echo "Original manifest: $original_package_digest"
+  echo "Original pins: $original_resolved_digest"
+  echo "Input manifest: $input_package_digest"
+  echo "Input pins: $input_resolved_digest"
+  echo "Local dependency identities: $local_identities"
+  echo "Local dependency paths: ${local_paths:-none}"
+} > "$RESULT_DIRECTORY/Inputs-$run_identifier.log"
+
+set +e
+(
+  cd "$build_root"
+  timeout_command "$BUILD_TIMEOUT_SECONDS" env TOOLCHAINS="$XCODE_TOOLCHAIN_IDENTIFIER" \
+    xcodebuild build-for-testing \
+    -jobs "$BUILD_JOB_COUNT" \
     -scheme "$SCHEME" \
     -destination "$DESTINATION" \
     -derivedDataPath "$derived_data" \
@@ -201,18 +414,26 @@ set +e
     -enableCodeCoverage NO \
     -onlyUsePackageVersionsFromResolvedFile \
     -skipPackageUpdates \
+    SWIFT_EXEC="$PINNED_SWIFTC" \
+    ${ONLY_TESTING[@]+"${ONLY_TESTING[@]}"} \
     2>&1 | tee "$build_log"
 )
 build_status=$?
 set -e
 reject_internal_tool_errors "$build_log"
+verify_pins
+verify_source_files
+if ! rg -F -x -- "    SWIFT_EXEC = $PINNED_SWIFTC" "$build_log" >/dev/null; then
+  echo "error: build log did not confirm the pinned Swift compiler" >&2
+  exit 1
+fi
 if (( build_status != 0 )); then
   echo "error: build-for-testing exited with status $build_status" >&2
   exit "$build_status"
 fi
 
 xctestrun_paths="$(find "$derived_data/Build/Products" -maxdepth 1 \
-  -type f -name '*.xctestrun' -print)"
+  -type f -name '*.xctestrun' ! -name '.configured-*.xctestrun' -print)"
 xctestrun_count="$(printf '%s\n' "$xctestrun_paths" | sed '/^$/d' | wc -l | tr -d ' ')"
 if [[ "$xctestrun_count" != 1 ]]; then
   echo "error: expected one xctestrun file, found $xctestrun_count" >&2
@@ -225,22 +446,26 @@ cp "$xctestrun_paths" "$configured_xctestrun"
 inject_testing_runtime "$configured_xctestrun"
 
 set +e
-timeout_command "$TEST_TIMEOUT_SECONDS" xcodebuild test-without-building \
+timeout_command "$TEST_TIMEOUT_SECONDS" env TOOLCHAINS="$XCODE_TOOLCHAIN_IDENTIFIER" \
+  xcodebuild test-without-building \
   -xctestrun "$configured_xctestrun" \
   -destination "$DESTINATION" \
   -resultBundlePath "$test_result" \
   -enableCodeCoverage NO \
+  ${ONLY_TESTING[@]+"${ONLY_TESTING[@]}"} \
   2>&1 | tee "$test_log"
 test_status=$?
 set -e
 reject_internal_tool_errors "$test_log"
+verify_pins
+verify_source_files
+summary="$(xcrun xcresulttool get test-results summary \
+  --path "$test_result" --format json)"
 if (( test_status != 0 )); then
+  printf '%s\n' "$summary" >&2
   echo "error: tests exited with status $test_status" >&2
   exit "$test_status"
 fi
-
-summary="$(xcrun xcresulttool get test-results summary \
-  --path "$test_result" --format json)"
 total_count="$(summary_number "$summary" totalTestCount)"
 passed_count="$(summary_number "$summary" passedTests)"
 failed_count="$(summary_number "$summary" failedTests)"
@@ -261,4 +486,5 @@ fi
 printf '%s\n' "$summary"
 echo "database-client tests: $passed_count passed"
 echo "Additional traits: ${TEST_TRAITS:-none}"
+echo "Verification mode: $verification_mode"
 echo "Result directory: $RESULT_DIRECTORY"

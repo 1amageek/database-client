@@ -206,9 +206,12 @@ public actor WebSocketDatabaseTransport: DatabaseTransport {
                             "WebSocket response exceeds the configured byte limit"
                         )
                     }
-                    bytes = ByteString(
-                        retaining: ReceivedWebSocketFrameByteOwner(data: data)
-                    )
+                    // Data cannot bound retained capacity; the final ByteString owns this copy.
+                    bytes = ByteString.copying(count: data.count) { destination in
+                        data.withUnsafeBytes { source in
+                            destination.copyMemory(from: source)
+                        }
+                    }
                 case .string:
                     throw DatabaseTransportError.invalidResponse(
                         "WebSocket database transport accepts binary frames only"

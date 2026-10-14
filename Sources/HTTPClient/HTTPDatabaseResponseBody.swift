@@ -26,11 +26,8 @@ struct HTTPDatabaseResponseBody: Sendable {
         switch fragments.count {
         case 0:
             return []
-        case 1:
-            return ByteString(
-                retaining: HTTPResponseByteOwner(data: fragments[0])
-            )
         default:
+            // Data cannot bound retained capacity, so copy once at this external boundary.
             return ByteString.copying(count: byteCount) { destination in
                 var offset = 0
                 for fragment in fragments {

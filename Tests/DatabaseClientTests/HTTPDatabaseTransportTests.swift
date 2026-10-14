@@ -1,5 +1,8 @@
 #if !os(WASI)
 import DatabaseClient
+import DatabaseKit
+import DatabaseTypes
+import DatabaseWire
 import Foundation
 import DatabaseClientHTTP
 import Synchronization
@@ -52,6 +55,46 @@ struct HTTPDatabaseTransportTests {
         #expect(request.value(forHTTPHeaderField: "x-database-id") == "calendar")
         #expect(request.value(forHTTPHeaderField: "x-tenant-id") == "tenant-a")
         #expect(request.value(forHTTPHeaderField: "x-workspace-id") == "production")
+    }
+
+    @Test("sliced HTTP query frames decode with bounded retention after shutdown")
+    func typedQueryResponseHasBoundedOwnership() async throws {
+        let page = try makeTestQueryResponsePage()
+        let call = makeTestDatabaseCall(operation: DatabaseOperationCatalog.queryExecute,
+                                        requestID: 81,
+                                        request: QueryExecuteOperation.Request(input: .text(language: .sql, statement: "SELECT 1")))
+        let encoded = try DatabaseWireEncoder().encodeResponse(
+            DatabaseOperationCatalog.queryExecute, requestID: 81, response: .rows(page)
+        )
+        var enclosing = Data(repeating: 0x5a, count: 4096)
+        enclosing.append(contentsOf: encoded)
+        enclosing.append(contentsOf: [UInt8](repeating: 0x5a, count: 4096))
+        let slicedResponse = enclosing[4096..<(4096 + encoded.count)]
+        ScriptedHTTPDatabaseEndpoint.installResponseProvider { request in
+            let response = try #require(HTTPURLResponse(url: request.url!, statusCode: 200,
+                                                       httpVersion: nil, headerFields: nil))
+            return (response, slicedResponse)
+        }
+        defer { ScriptedHTTPDatabaseEndpoint.installResponseProvider(nil) }
+        let transport = HTTPDatabaseTransport(
+            configuration: try HTTPDatabaseConfiguration(endpoint: URL(string: "https://database.example.test")!, accessToken: "token"),
+            sessionConfiguration: makeSessionConfiguration()
+        )
+        let received = try await transport.send(call.encode())
+        await transport.shutdown()
+        #expect(received == encoded)
+        #expect(try #require(received.retainedByteCount) >= received.count)
+        #expect(received.isStorageSelfContained)
+        guard case .rows(let decoded) = try call.decodeResponse(received) else {
+            Issue.record("Expected a typed query row page")
+            return
+        }
+        #expect(decoded.columns == page.columns)
+        var iterator = decoded.makeRowIterator()
+        let next = try iterator.next()
+        let row = try #require(next)
+        #expect(row.values == (try page.materializedRows(maximumCount: 1))[0].values)
+        #expect(try iterator.next() == nil)
     }
 
     @Test("transport maps HTTP failures to a typed client error")

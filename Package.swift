@@ -88,7 +88,8 @@ let package = Package(
                 .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
-            path: "Sources/WebSocketClient"
+            path: "Sources/WebSocketClient",
+            exclude: ["DESIGN.md"]
         ),
         .target(
             name: "DatabaseClientHTTP",
@@ -97,7 +98,8 @@ let package = Package(
                 .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
-            path: "Sources/HTTPClient"
+            path: "Sources/HTTPClient",
+            exclude: ["DESIGN.md"]
         ),
         .target(
             name: "DatabaseClientFramedStream",
@@ -112,6 +114,7 @@ let package = Package(
             name: "DatabaseClientTests",
             dependencies: [
                 "DatabaseClient",
+                .product(name: "DatabaseKit", package: "database-kit"),
                 .product(name: "DatabaseTypes", package: "database-types"),
                 .target(
                     name: "DatabaseClientJavaScript",

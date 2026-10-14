@@ -6,10 +6,8 @@ import Testing
 
 @Suite("HTTP response body ownership")
 struct HTTPDatabaseResponseBodyTests {
-    @Test("a single URLSession data chunk is retained without copying")
-    func singleChunkSharesReceivedStorage() throws {
-        // Use heap-backed Data: Foundation may store tiny values inline in the
-        // value itself, where copying the Data value necessarily relocates bytes.
+    @Test("a single URLSession chunk becomes independently bounded response storage")
+    func singleChunkHasBoundedOwnedStorage() throws {
         let data = Data(repeating: 0xa5, count: 4_096)
         var body = HTTPDatabaseResponseBody()
 
@@ -17,10 +15,26 @@ struct HTTPDatabaseResponseBodyTests {
         #expect(accepted)
         let bytes = body.assembleBytes()
 
-        #expect(try address(of: bytes) == address(of: data))
-        #expect(bytes.retainedByteCount == nil)
+        #expect(try address(of: bytes) != address(of: data))
+        #expect(try #require(bytes.retainedByteCount) >= bytes.count)
+        #expect(bytes.isStorageSelfContained)
         #expect(bytes.count == data.count)
         #expect(bytes.first == 0xa5)
+    }
+
+    @Test("a sliced Data chunk does not retain its enclosing allocation")
+    func slicedChunkBecomesSelfContained() throws {
+        let enclosing = Data(repeating: 0x5a, count: 8192)
+        let slice = enclosing[1024..<4096]
+        var body = HTTPDatabaseResponseBody()
+        let accepted = body.append(slice, maximumBytes: slice.count)
+        #expect(accepted)
+        let bytes = body.assembleBytes()
+        #expect(bytes.count == 3072)
+        #expect(try #require(bytes.retainedByteCount) >= bytes.count)
+        #expect(bytes.isStorageSelfContained)
+        #expect(bytes.allSatisfy { $0 == 0x5a })
+        #expect(try address(of: bytes) != address(of: slice))
     }
 
     @Test("multiple chunks consolidate directly into one final allocation")

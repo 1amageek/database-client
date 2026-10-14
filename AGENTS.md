@@ -31,9 +31,11 @@
   when that platform provides it. Never hold it across `await` or transport
   I/O.
 - A transport must complete each request exactly once with bytes or a typed transport error. Cancellation and timeout must not become success.
-- Preserve owned `ByteString` values through the core path. Copy only when an
-  external runtime cannot retain Swift memory; copy directly into the final
-  owner without an intermediate array.
+- Preserve owned `ByteString` values through the core path. At an external
+  ownership boundary, copy when the runtime cannot retain Swift memory or its
+  retained allocation cannot be bounded accurately. Copy directly into the
+  final owner without an intermediate array; visible byte count is not proof
+  of an external owner's retained capacity.
 - Foundation, Codable, URLSession, and JavaScriptKit must not enter the Embedded core target.
 - Do not silently retry, replace malformed responses, or return cached success after transport or decode failure.
 - This is version 1. Remove superseded APIs instead of retaining compatibility paths.
@@ -43,10 +45,10 @@
 - Run Native macOS tests with the pinned Swift 6.4 snapshot through
   `scripts/xcode-test-harness`. The harness must inject the snapshot testing
   runtime into the generated `.xctestrun` before executing tests and requires
-  exactly 48 passed tests for the standard graph. An isolated `MultiBase`
-  graph uses `DATABASE_CLIENT_TEST_TRAITS=MultiBase` and requires 51 passed
-  tests. Both runs require zero failures, skips, expected failures, or runtime
-  warnings.
+  the exact standard count owned by that executable harness. An isolated
+  `MultiBase` graph uses `DATABASE_CLIENT_TEST_TRAITS=MultiBase` and the
+  corresponding harness-owned count. Both runs require zero failures, skips,
+  expected failures, or runtime warnings.
 - Set `XCODE_TEST_WORK_ROOT` to an explicit absolute temporary directory when
   iterating locally. The harness preserves that DerivedData so subsequent
   corrections compile incrementally; release evidence still executes the

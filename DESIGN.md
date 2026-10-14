@@ -13,7 +13,9 @@ Everything it sends is meaningful only because `database-kit` owns the wire
 contract and `database-server` implements the other end of it.
 
 - Parent: [Database workspace](../DESIGN.md).
-- Children: none. This package declares no module-level design authority.
+- Children: [HTTP transport](Sources/HTTPClient/DESIGN.md) and
+  [WebSocket transport](Sources/WebSocketClient/DESIGN.md). Other target
+  responsibilities remain composed by this package in the current scope.
 - Operating contract and verification expectations: [AGENTS.md](AGENTS.md).
 
 This document does not restate wire field layout, operation identity, or
@@ -68,10 +70,12 @@ error type.
 |---|---|---|---|---|
 | [Database workspace](../DESIGN.md) | parent | system index and semantic plane assignment | Places this package as the remote access plane. | It is a peer consumer of the wire contract, not a consumer of Framework. |
 | [database-kit](../database-kit/DESIGN.md) | depends on | `DatabaseOperation`, `DatabaseWireEncoder`/`Decoder`, `DatabaseWireLimits`, `OperationRequestMetadata`, `RemoteOperationError`, `JobIdentity`, and under `MultiBase` `DatabaseOperationTarget` | Supplies the entire canonical remote vocabulary. | The client never re-encodes, extends, or reinterprets a wire field. A kit wire change is a client-breaking change. |
-| [database-types](../database-types/AGENTS.md) | depends on | `ByteString` and `ByteStringOwner` | Supplies owned request and response bytes. | External runtime memory is adopted through a `ByteStringOwner`, not copied through an intermediate array. |
+| [database-types](../database-types/AGENTS.md) | depends on | `ByteString` and `ByteStringOwner` | Supplies owned request and response bytes. | External ownership may be retained only with an accurately bounded lifetime/allocation; otherwise copy directly to the final ByteString owner. |
+| [HTTP transport](Sources/HTTPClient/DESIGN.md) | child | bounded Foundation response conversion | Owns URLSession response/body adaptation. | Data views do not expose retained allocation capacity. |
+| [WebSocket transport](Sources/WebSocketClient/DESIGN.md) | child | bounded received frame conversion | Owns actor-isolated frame receive/correlation/lifecycle. | Copies at the Data receive boundary before canonical Wire admission. |
 | [database-server](../database-server/DESIGN.md) | peer across the wire; no package dependency | DatabaseWire request and response framing | Implements the responding side of every operation this client issues. | Neither package may depend on the other. Compatibility is established through the shared kit version, not through a shared type. |
 | [database-cli](../database-cli/DESIGN.md) | used by | `DatabaseClient` plus one transport | The CLI is a consumer that adds profiles, credentials, and output. | Command, profile, and credential concerns must not move into the client. |
-| [AGENTS.md](AGENTS.md) | operating authority | responsibility, naming, concurrency, and harness rules | Owns the exact toolchain, harness invocation, and expected test counts. | Expected counts are read from `AGENTS.md`; this document does not duplicate them. |
+| [AGENTS.md](AGENTS.md) | operating authority | responsibility, naming, concurrency, and harness rules | Selects the exact toolchain and harness invocation. | Executable harness configuration owns exact native test counts; this document does not duplicate them. |
 
 ## Architecture
 
@@ -131,10 +135,11 @@ target field.
   result response for a different job is `mismatchedJob`, and a paged result
   additionally validates continuation identity, continuation index, page
   digest, and total byte count before the page is accepted.
-- Owned `ByteString` values are preserved through the core path. Bytes produced
-  by an external runtime are adopted through a `ByteStringOwner`
-  (`HTTPResponseByteOwner`, `ReceivedWebSocketFrameByteOwner`) and copied at
-  most once, directly into the final owner.
+- Owned `ByteString` values are preserved through the core path. External
+  runtime memory is retained only when its ownership and retained allocation
+  can be bounded accurately. The HTTP and WebSocket child designs own their
+  Foundation receive conversion; these boundaries copy directly into one final
+  ByteString owner because Data does not expose retained allocation capacity.
 - The core target admits neither Foundation, `Codable`, `URLSession`, nor
   JavaScriptKit, so it remains buildable for Embedded WASM. Those dependencies
   exist only inside the transport adapters that require them.
@@ -203,9 +208,9 @@ continuation resumption.
 
 ## Verification and Change Impact
 
-Expected counts, the pinned toolchain, and the exact harness invocation are
-owned by [AGENTS.md](AGENTS.md). This table maps each invariant to the gate that
-falsifies it.
+Executable harness configuration owns exact native test counts;
+[AGENTS.md](AGENTS.md) selects the pinned toolchain and invocation. This table
+maps each invariant to the gate that falsifies it.
 
 | Invariant | Required evidence |
 |---|---|
@@ -213,7 +218,25 @@ falsifies it.
 | the `MultiBase` target binding holds end to end | isolated `MultiBase` native graph selected by `DATABASE_CLIENT_TEST_TRAITS` |
 | the JavaScript transport resolves, rejects, and expires correctly | `scripts/javascript-test-harness` executing the packaged runner under Node, not a PackageToJS build alone |
 | the core stays Embedded-capable | release build of `DatabaseClient` on the pinned Embedded WASM SDK |
-| HTTP and WebSocket adapters preserve byte ownership and correlation | the transport suites in the native graph, including the scripted and sequenced connector fixtures |
+| HTTP and WebSocket adapters preserve bounded byte ownership and correlation | the transport suites in the native graph, including sliced Data, typed query page decode and the scripted/sequenced cancellation fixtures |
+
+The native harness accepts repeatable `--only-testing` selectors only with
+`--expected-count`; full-run counts remain package-owned. Every invocation
+performs `build-for-testing` before `test-without-building` and injects the
+snapshot Testing runtime into either supported xctestrun layout. It verifies
+the August 14 snapshot directory and compiler commit, launches Xcode through
+XcodeDefault with an explicit `SWIFT_EXEC`, and requires that compiler path in
+the build log.
+
+`--diagnostic-source-root` copies a separate prepared tree with absolute local
+Kit dependencies into the harness-owned source directory. Conditional trait
+forwarding is preserved; standard and MultiBase selection changes only that
+isolated manifest. This mode is explicitly local diagnostic evidence, not the
+URL final gate. Source/prepared manifests and pins retain their SHA-256 digests;
+nonlocal URL pins must match the original graph after resolution/build/test.
+Input digests, dependency paths, resolved pins, raw logs and unique xcresults
+remain beside the result. No invocation substitutes old compiled test products
+for the mandatory build stage.
 
 Change impact:
 
@@ -229,6 +252,30 @@ Change impact:
   invalidates the Embedded gate and is rejected regardless of native results.
 
 ## Planned SQL Invocation Preservation
+
+S01 already migrates the current query operation's parameters and row pages to
+the [Kit QueryValue/QueryColumn contract](../database-kit/Sources/DatabaseKit/Query/DESIGN.md#s01-public-query-boundary)
+and [bounded Wire grammar](../database-kit/Sources/DatabaseWire/DESIGN.md#s01-frozen-query-codec-contract).
+Direct source consumers import QueryColumn and QueryValue from DatabaseKit;
+Wire does not retain aliases or re-export declarations to conceal the move.
+DatabaseCall and DatabaseSessionClient consume the changed codecs; transport
+send/correlation state remains opaque ByteString. No transport-specific SQL
+conversion, JSON reconstruction or first-row schema inference is introduced.
+
+The response page retains ordered typed columns even when rowCount is zero.
+Iterators preserve positional cells, duplicate labels and rich metadata after
+the transport's temporary response scope ends, retaining the original byte
+owner. Materializing a page remains an explicit bounded call. A malformed
+column/type/value/page is a Wire call failure before acceptance, never a NULL
+or empty response. Standard and MultiBase fixtures migrate together while v5
+target/provenance semantics remain unchanged.
+
+S01-C10/C11/C13 evidence uses actual encode/send/decode and lazy iteration for
+duplicate/empty columns and each rich value, including invalid-tag/type/arity
+responses and last-owner release. Native core/transport suites, the actual
+JavaScript/WASI harness and pinned Embedded core build retain their existing
+owners; no new backend execution belongs here. Expected counts remain in the
+package harness. S17 block dispatch remains a later responsibility.
 
 S17 consumes the statement/block operation declared by DatabaseWire and the
 [SQL semantic profile](../database-kit/Sources/DatabaseKit/Query/SQL/DESIGN.md).
