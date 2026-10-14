@@ -227,3 +227,24 @@ Change impact:
   contract at the same kit version.
 - Adding a dependency to the core target that Embedded WASM cannot build
   invalidates the Embedded gate and is rejected regardless of native results.
+
+## Planned SQL Invocation Preservation
+
+S17 consumes the statement/block operation declared by DatabaseWire and the
+[SQL semantic profile](../database-kit/Sources/DatabaseKit/Query/SQL/DESIGN.md).
+The client forwards SQL text, canonical parameters, and admitted options; it
+does not parse SQL, infer types, own schema state, or retain an active data
+transaction. One block is one correlated request with an ordered list of
+post-closure outcomes.
+
+Query rows preserve column ordinals, duplicate labels, type/typmod metadata,
+typed NULL, numeric display scale, array dimensions, JSON/JSONB distinction,
+and mixed interval values through the canonical Kit codecs. The response
+frame remains retained through lazy page decoding. Timeout, cancellation,
+remote SQLSTATE, and commit-unknown are failures rather than empty rows.
+
+Verification adds native and JavaScript/WASI calls for ordered and empty
+results, rich values, block rollback, correlation, and cancellation. Core and
+Embedded graphs remain Foundation-free. Changes to the Kit contract recheck
+Server and CLI at the same committed dependency revision; the Framework's
+complete semantic corpus is not duplicated here.
