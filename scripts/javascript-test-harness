@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly toolchain_identifier="org.swift.64202608141a"
-readonly default_swift_sdk="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm"
+readonly toolchain_identifier="org.swift.640202609131a"
+readonly default_swift_sdk="swift-6.4.0-RELEASE_wasm"
 readonly package_name="database-client"
 readonly expected_packaged_artifact="${package_name}PackageTests.xctest.wasm"
 readonly build_timeout_seconds="${JAVASCRIPT_TEST_BUILD_TIMEOUT_SECONDS:-600}"
@@ -12,6 +12,8 @@ readonly test_timeout_seconds="${JAVASCRIPT_TEST_TIMEOUT_SECONDS:-120}"
 swift_sdk="${DATABASE_CLIENT_SWIFT_SDK:-${default_swift_sdk}}"
 expected_test_count=""
 filter=""
+readonly full_test_count=32
+readonly javascript_transport_test_count=11
 
 usage() {
     print -u2 "Usage: scripts/javascript-test-harness [--swift-sdk <id>] [--filter <pattern>] [--expected-tests <count>]"
@@ -45,12 +47,25 @@ while (( $# > 0 )); do
     esac
 done
 
+if [[ -z "${expected_test_count}" ]]; then
+    case "${filter}" in
+        "") expected_test_count="${full_test_count}" ;;
+        JavaScriptDatabaseTransportTests) expected_test_count="${javascript_transport_test_count}" ;;
+        *) print -u2 "A focused filter requires --expected-tests"; exit 64 ;;
+    esac
+fi
+
 if [[ -n "${expected_test_count}" && ! "${expected_test_count}" =~ '^[0-9]+$' ]]; then
     print -u2 "--expected-tests must be a non-negative integer"
     exit 64
 fi
 
 readonly swift_executable="$(xcrun --toolchain "${toolchain_identifier}" --find swift)"
+readonly selected_toolchain_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${swift_executable%/usr/bin/swift}/Info.plist")"
+[[ "${selected_toolchain_identifier}" == "${toolchain_identifier}" ]] || {
+    print -u2 "Expected Swift toolchain ${toolchain_identifier}, found ${selected_toolchain_identifier}"
+    exit 1
+}
 readonly node_executable="$(command -v node)"
 readonly packaged_test_directory=".build/plugins/PackageToJS/outputs/PackageTests"
 readonly runner_path="Tests/JavaScriptRuntimeHarness/run.mjs"

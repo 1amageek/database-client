@@ -1,11 +1,56 @@
 #if os(WASI)
 import DatabaseClient
 import DatabaseClientJavaScript
+import DatabaseKit
+import DatabaseTypes
+import DatabaseWire
 import JavaScriptKit
 import Testing
 
 @Suite("JavaScript database transport", .serialized)
 struct JavaScriptDatabaseTransportTests {
+    @Test("Complete SQL rows and COPY traverse the JavaScript Promise boundary", .timeLimit(.minutes(1)))
+    func completeSQLResponseIsOwned() async throws {
+        let columns = [try QueryColumn(number: 1, name: "value", type: .sql(.text), isNullable: false)]
+        let bytes = try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.sqlExecute,
+            requestID: 1, response: .init(results: [
+                .rows(try .init(columns: columns, rows: [QueryRow(values: [.primitive(.string("owned"))])])),
+                .copy(bytes: ByteString([0, 255, 10]), affectedRows: 1),
+            ]))
+        JSObject.global.__databaseSQLResponse = .string("[" + bytes.map { String($0) }.joined(separator: ",") + "]")
+        let transport = JavaScriptDatabaseTransport(configuration: try .init(requestEntrypointName: "__databaseExecute_sql"))
+        let response = try await executeTestDatabaseOperation(client: DatabaseClient(transport: transport),
+            operation: DatabaseOperationCatalog.sqlExecute, request: .init(input: .text("SELECT 1; COPY t TO STDOUT")))
+        JSObject.global.__databaseSQLResponse = .undefined
+        guard case .rows(let rows) = response.results[0], case .copy(let copy, _) = response.results[1] else {
+            Issue.record("SQL outcomes changed across JavaScript")
+            return
+        }
+        var iterator = rows.makeRowIterator()
+        #expect(try iterator.next()?.values == [.primitive(.string("owned"))])
+        #expect(copy == ByteString([0, 255, 10]))
+        let captured = try #require(JSObject.global.__databaseCapturedRequest.object)
+        #expect(captured["length"].number ?? 0 > 0)
+    }
+
+    @Test("Typed SQL failure metadata crosses the JavaScript Promise boundary", .timeLimit(.minutes(1)))
+    func completeSQLDiagnosticIsTyped() async throws {
+        let diagnostic = try SQLDiagnostic(sqlState: "42601", category: .syntax, message: "Invalid syntax", position: 4)
+        let failure = try RemoteOperationError(category: .invalidRequest, code: "sql_failure", message: "Failed",
+            retryability: .never, sqlDiagnostic: diagnostic)
+        let bytes = try DatabaseWireEncoder().encodeFailure(requestID: 1, operation: .sqlExecute, error: failure)
+        JSObject.global.__databaseSQLResponse = .string("[" + bytes.map { String($0) }.joined(separator: ",") + "]")
+        let transport = JavaScriptDatabaseTransport(configuration: try .init(requestEntrypointName: "__databaseExecute_sql"))
+        do {
+            _ = try await executeTestDatabaseOperation(client: DatabaseClient(transport: transport),
+                operation: DatabaseOperationCatalog.sqlExecute, request: .init(input: .text("bad")))
+            Issue.record("SQL remote failure became success")
+        } catch DatabaseClientError.call(.remote(let remote)) {
+            #expect(try remote.sqlDiagnostic() == diagnostic)
+        }
+        JSObject.global.__databaseSQLResponse = .undefined
+    }
+
     @Test(
         "request bytes and an offset response view preserve their exact ranges",
         .timeLimit(.minutes(1)))

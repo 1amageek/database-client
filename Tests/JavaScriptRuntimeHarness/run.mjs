@@ -98,6 +98,10 @@ globalThis.__databaseCapturedRequest = undefined;
 globalThis.__databaseCancellationWasInvoked = false;
 globalThis.__databaseRequestLimitInvocationCount = 0;
 globalThis.__databaseLateResponseDecodeProbeCount = 0;
+globalThis.__databaseExecute_sql = (request) => {
+    globalThis.__databaseCapturedRequest = Array.from(request);
+    return Promise.resolve(new Uint8Array(JSON.parse(globalThis.__databaseSQLResponse)));
+};
 globalThis.__databaseExecute_success = (request) => {
     globalThis.__databaseCapturedRequest = Array.from(request);
     const backing = new Uint8Array([0xaa, 7, 8, 9, 0xbb]);

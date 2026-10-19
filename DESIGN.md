@@ -220,6 +220,13 @@ maps each invariant to the gate that falsifies it.
 | the core stays Embedded-capable | release build of `DatabaseClient` on the pinned Embedded WASM SDK |
 | HTTP and WebSocket adapters preserve bounded byte ownership and correlation | the transport suites in the native graph, including sliced Data, typed query page decode and the scripted/sequenced cancellation fixtures |
 
+Native macOS retains the pinned August 14 snapshot. JavaScript/WASI uses the
+existing Swift 6.4.0 release compiler (`org.swift.640202609131a`) and matching
+`swift-6.4.0-RELEASE_wasm` SDK; formal Embedded uses that same release compiler
+and `swift-6.4.0-RELEASE_wasm-embedded`. The JavaScript harness checks the selected
+toolchain's exact bundle identifier before build, so an Xcode fallback cannot
+satisfy the release gate. Native snapshot evidence is not formal WASM evidence.
+
 The native harness accepts repeatable `--only-testing` selectors only with
 `--expected-count`; full-run counts remain package-owned. Every invocation
 performs `build-for-testing` before `test-without-building` and injects the
@@ -277,21 +284,51 @@ JavaScript/WASI harness and pinned Embedded core build retain their existing
 owners; no new backend execution belongs here. Expected counts remain in the
 package harness. S17 block dispatch remains a later responsibility.
 
-S17 consumes the statement/block operation declared by DatabaseWire and the
-[SQL semantic profile](../database-kit/Sources/DatabaseKit/Query/SQL/DESIGN.md).
-The client forwards SQL text, canonical parameters, and admitted options; it
-does not parse SQL, infer types, own schema state, or retain an active data
-transaction. One block is one correlated request with an ordered list of
-post-closure outcomes.
+## S17 Complete SQL Calls
+
+The canonical declaration is `DatabaseOperationCatalog.sqlExecute`, owned by
+[DatabaseWire](../database-kit/Sources/DatabaseWire/DESIGN.md). Its
+`SQLExecuteOperation.Request` consumes `.text(String)`,
+`.statement(QueryStatement)`, or `.block(SQLBlock)`, canonical parameters and
+one execution budget. The existing
+`DatabaseSessionClient.execute(_:request:metadata:)` is the public call surface;
+SQL introduces no convenience client, parser, inferred access mode, session
+state, retry or transport-specific payload.
+
+```text
+owned text / statement / block + parameters + budget
+    -> existing session.execute(sqlExecute, request, metadata)
+        -> one request ID -> canonical bounded codecs -> injected transport
+        -> correlated complete response after authoritative block closure
+            -> ordered rows / COPY bytes / command counts
+        -> typed remote SQL diagnostic on failure
+```
+
+One request returns one bounded complete ordered result. It exposes no
+continuation, result paging or automatic replay. Existing `queryExecute`,
+`mutationExecute`, job and pagination contracts retain their meaning. Under
+`MultiBase`, the session's explicit Base target is preserved; the client does
+not infer a target from SQL. The server owns target and operation admission.
 
 Query rows preserve column ordinals, duplicate labels, type/typmod metadata,
 typed NULL, numeric display scale, array dimensions, JSON/JSONB distinction,
-and mixed interval values through the canonical Kit codecs. The response
-frame remains retained through lazy page decoding. Timeout, cancellation,
-remote SQLSTATE, and commit-unknown are failures rather than empty rows.
+and mixed interval values through the canonical Kit codecs. Each retained
+row/COPY byte value remains valid after the frame's lexical decode scope and
+transport shutdown. Materialization remains bounded by the Wire contract.
+`RemoteOperationError` retains the canonical typed SQL diagnostic supplied by
+Kit; the client preserves it without recreating SQLSTATE from messages.
+Timeout, cancellation, malformed bytes, correlation mismatch and commit-unknown
+remain distinguishable failures rather than empty or synthetic results.
 
-Verification adds native and JavaScript/WASI calls for ordered and empty
-results, rich values, block rollback, correlation, and cancellation. Core and
-Embedded graphs remain Foundation-free. Changes to the Kit contract recheck
-Server and CLI at the same committed dependency revision; the Framework's
-complete semantic corpus is not duplicated here.
+| Invariant | S17 falsifiable evidence owner |
+|---|---|
+| Generic invocation preserves ordered response alternatives and declared row values | Native core tests send the new operation through encode/transport/decode; empty rows, duplicate labels and rich values remain exact. |
+| Remote diagnostics and correlation remain typed | New-operation tests reject mismatched request IDs and malformed diagnostic metadata, and preserve SQLSTATE, source position and identifiers in remote failures. |
+| Retained data outlives transport and response scope | Native transport tests retain decoded rows and COPY bytes after shutdown and verify byte/value identity and bounded ownership. |
+| JavaScript carries the same operation and failure contract | Actual JavaScript/WASI runtime tests execute success, failure and cancellation; packaging alone is insufficient. |
+| Core remains platform independent | Exact formal ordinary and Embedded WASM compile/link/runtime evidence exercises the new declaration through the existing client. |
+
+The Framework's transaction, rollback and SQL semantic corpus is not duplicated
+in client unit tests. Real backend execution through the public operation is
+owned by S17's end-to-end integration lane. Kit, Server, Client and CLI use the
+same frozen task-source dependency graph; final URL integration remains S18.
