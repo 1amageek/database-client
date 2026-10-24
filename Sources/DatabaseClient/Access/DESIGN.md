@@ -2,7 +2,7 @@
 
 ## Purpose and Scope
 
-Status: proposed, unimplemented component. Parent: [SDK package](../../DatabaseAccess/DESIGN.md).
+Status: implemented remote adapter component. Parent: [Core Client](../DESIGN.md).
 Children: none. Owns remote access composition over existing Client sessions.
 This component consumes DatabaseAccess within DatabaseClient. The application's lazy opener
 assembles HTTP/WebSocket/JavaScript transports with existing Client products and
@@ -21,7 +21,8 @@ the small result adapters at this boundary instead.
 
 | Design | Relationship | Contract Used | Summary | Cautions |
 |---|---|---|---|---|
-| [Package](../../DatabaseAccess/DESIGN.md) | parent | Optional remote composition | Owns dependency direction | No Framework/Server dependency |
+| [Core Client](../DESIGN.md) | parent | Invocation composition | Owns module boundaries | No Framework/Server dependency |
+| [Common access](../../DatabaseAccess/DESIGN.md) | depends on | DatabaseOpening/DatabaseExecuting and lazy results | Supplies the shared application contract | No query interpretation |
 | [NamedAccess](../../DatabaseAccess/NamedAccess/DESIGN.md) | used by | Prepared endpoint publication | Owns named access | Alias does not set HTTP databaseID |
 | [Results](../../DatabaseAccess/Results/DESIGN.md) | depends on | Lazy stream adaptation | Wraps Client streams/pages | Preserve checked consumers |
 | [Client invocation](../QueryExecution/DESIGN.md) | depends on | Execute, continuation and close | Owns remote calls | No implicit retries |
@@ -94,3 +95,15 @@ uses two aliases and distinct server targets/credentials to detect misrouting.
 Client's existing real JavaScript/WASI tests remain lower-layer proof; N05 must
 execute the actual SDK adapter on ordinary/Embedded targets. HTTP/WebSocket
 products are never substituted into an Embedded graph to make it compile.
+
+### N02 concrete composition
+
+DatabaseConfiguration.owningRemote receives a lazy transport factory, an explicit
+session selector (defaulting to the ordinary database session), an awaited
+transport shutdown operation and existing Wire limits. borrowingRemote retains
+an already selected external session. Both require a positive concurrency bound.
+The private RemoteOpening actor claims one use before I/O. RemoteExecution owns
+only its cleanup task; its nonisolated execute forwards input, parameters,
+options and metadata to the existing connection and wraps its final streams.
+Original errors and ordered result kinds are preserved. No second execution
+phase, counter, timeout, retry or query evaluator is added.

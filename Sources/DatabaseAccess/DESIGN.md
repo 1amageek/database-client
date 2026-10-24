@@ -57,7 +57,7 @@ execution capabilities. Those remain explicitly injected per DBContainer.
 | [Embedded adapter](../../../database-framework/Sources/DatabaseEmbedded/DESIGN.md) | coordinates with | Direct Framework invocation | Owns local resource composition | Never dispatches Wire operations |
 | [Remote adapter](../DatabaseClient/Access/DESIGN.md) | coordinates with | Client invocation | Owns remote resource composition | Never interprets query semantics |
 | [Kit fluent contract](../../../database-kit/Sources/DatabaseKit/Query/Fluent/DESIGN.md) | depends on | Pure canonical construction | Supplies unbound definitions | Contains no runtime handle |
-| [Framework facade](../../../database-framework/Sources/Database/QueryExecution/DESIGN.md) | depends on | Original authority and closed final results | Local execution boundary | Existing storage ownership is exclusive |
+| [Framework facade](../../../database-framework/Sources/Database/QueryExecution/DESIGN.md) | coordinates with | Adapter-provided execution | DatabaseEmbedded consumes this boundary | DatabaseAccess does not import Framework |
 | [Client invocation](../DatabaseClient/QueryExecution/DESIGN.md) | depends on | Typed results and continuation validation | Remote execution boundary | Keep its checked page consumer |
 
 ## Architecture

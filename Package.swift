@@ -46,7 +46,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            revision: "b325109676a4b9b3431e2e306ca8c0dcf1d9a7bf",
+            revision: "add565be81994149a53f6cbd408cc50eb5c875edc",
             traits: [
                 .trait(
                     name: "MultiBase",

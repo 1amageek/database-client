@@ -2,7 +2,8 @@
 
 ## Purpose and Scope
 
-Status: proposed, unimplemented component. Parent: [DatabaseAccess](../DESIGN.md).
+Status: acquisition configuration is implemented; named directories and handles
+remain N03 work. Parent: [DatabaseAccess](../DESIGN.md).
 Children: none. Owns application aliases, startup publication, generation-bound
 handles and authoritative access shutdown.
 
@@ -142,3 +143,20 @@ Native tests exercise real concurrency; ordinary/Embedded target tests exercise
 their available task scheduling and the same storage/entry points. Do not infer
 multi-thread semantics from a single-thread WASI runtime. Recheck the state matrix
 and conditional-compilation searches before implementation acceptance/commit.
+
+### N02 acquisition configuration
+
+DatabaseConfiguration is an immutable opener plus an explicit positive
+maximumConcurrentExecutions. Construction rejects a non-positive bound before
+resource acquisition; open() delegates once to DatabaseOpening. Each adapter
+opener is single-use and actor-isolated on every target. A failed/cancelled
+acquisition cleans up resources already returned by its factory before throwing;
+the factory owns anything it acquired before returning/throwing itself.
+
+Factories distinguish owningRemote/borrowingRemote and owningEmbedded/
+borrowingEmbedded. An owning factory creates the resource inside open, fixes its
+session/context explicitly, and transfers a logical execution scope once.
+Adapter execution delegates without another admission queue or meter. Adapter
+close coalesces its awaited cleanup, drains the existing connection first and
+then shuts down only owned transport/container resources. Cancellation does not
+abandon cleanup. All names still remain N03 application-directory concerns.

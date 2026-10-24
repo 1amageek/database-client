@@ -24,7 +24,9 @@ struct AccessRuntimeContract {
             try await terminalFailure()
             try await closeRetained()
             try await outcomes()
-            print("ACCESS_RUNTIME_PASS cases=6")
+            try await ownedAccess()
+            try await borrowedAccess()
+            print("ACCESS_RUNTIME_PASS cases=8")
         } catch {
             print("ACCESS_RUNTIME_FAIL")
             exit(1)
@@ -127,5 +129,38 @@ struct AccessRuntimeContract {
         var empty = result.results[3].rows.makeAsyncIterator()
         try require(try await empty.next() == nil)
         print("ACCESS_RUNTIME_CASE outcome-kinds PASS")
+    }
+
+    static func ownedAccess() async throws {
+        let closed = AccessRuntimeCount()
+        let configuration = try DatabaseConfiguration.owningRemote(maximumConcurrentExecutions: 2,
+            makeTransport: { AccessRuntimeTransport(mode: .rows) },
+            shutdown: { _ in closed.recordShutdown() })
+        let access = try await configuration.open()
+        let result = try await access.execute(.sql("SELECT n"), parameters: [], options: .init(pageSize: 1), metadata: .init())
+        var iterator = result.rows.makeAsyncIterator()
+        try require(try await iterator.next()?.values == [.primitive(.int32(1))])
+        try require(try await iterator.next()?.values == [.primitive(.int32(2))])
+        await access.close()
+        await access.close()
+        try require(closed.count == 1)
+        var rejected = false
+        do { _ = try await access.execute(.sql("SELECT n"), parameters: [], options: .init(), metadata: .init()) }
+        catch { rejected = true }
+        try require(rejected)
+        print("ACCESS_RUNTIME_CASE owned-access PASS")
+    }
+
+    static func borrowedAccess() async throws {
+        let client = DatabaseClient(transport: AccessRuntimeTransport(mode: .rows))
+        let configuration = try DatabaseConfiguration.borrowingRemote(session: client.database, maximumConcurrentExecutions: 1)
+        let access = try await configuration.open()
+        await access.close()
+        let independent = try await client.openConnection()
+        defer { await independent.close() }
+        let result = try await independent.execute("SELECT n", options: .init(pageSize: 1))
+        var rows = result.rows.makeAsyncIterator()
+        try require(try await rows.next()?.values == [.primitive(.int32(1))])
+        print("ACCESS_RUNTIME_CASE borrowed-access PASS")
     }
 }

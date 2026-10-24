@@ -378,7 +378,7 @@ struct QueryTestTransport: DatabaseTransport {
     }
 }
 
-private actor QueryExchangeGate {
+actor QueryExchangeGate {
     private var entered = false
     private var enteredWaiter: CheckedContinuation<Void, Never>?
     private var releaseWaiter: CheckedContinuation<Void, Never>?
