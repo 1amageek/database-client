@@ -69,7 +69,8 @@ public actor QueryConnection<Transport: DatabaseTransport> {
                 switch value {
                 case .rows(let page): count = UInt64(page.rowCount)
                 case .rdfGraph(let page): count = UInt64(page.quadCount)
-                default: return value
+                case .boolean: return value
+                default: throw QueryStreamError.unexpectedResultKind
                 }
                 guard count <= UInt64(limit) else {
                     throw QueryStreamError.pageLimitExceeded(actual: count, maximum: limit)

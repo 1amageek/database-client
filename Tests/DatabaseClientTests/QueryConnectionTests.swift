@@ -260,6 +260,29 @@ struct QueryConnectionTests {
         }
     }
 
+    @Test("Paged requests reject complete block, command and COPY envelopes before adapting rows")
+    func invalidInitialPageKinds() async throws {
+        let outcomes: [QueryExecuteOperation.Response] = [
+            .block([.rows(try page(1, count: 2))]),
+            .block([.rdfGraph(try graphPage(1, count: 2))]),
+            .command(.update, affectedRows: 1), .copy(bytes: ByteString([1]), affectedRows: 1),
+        ]
+        for outcome in outcomes {
+            let transport = QueryTestTransport { bytes in
+                let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.queryExecute, from: bytes)
+                return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
+                    requestID: request.requestID, response: outcome)
+            }
+            let connection = try await DatabaseClient(transport: transport).openConnection()
+            defer { await connection.close() }
+            await #expect(throws: QueryStreamError.unexpectedResultKind) {
+                try await connection.execute("SELECT 1", options: .init(pageSize: 1))
+            }
+            let complete = try await connection.execute("SELECT 1")
+            #expect(complete.results.count == outcome.results.count)
+        }
+    }
+
     @Test("Long acyclic row and graph continuations retain order and terminate normally")
     func longContinuationChains() async throws {
         for graph in [false, true] {

@@ -37,7 +37,10 @@ fetch preserves input, parameters, partitions, target, metadata and request
 budget. Schema, outcome kind, read identity and continuation progress are
 validated; failures never become empty success. Initial and continuation responses
 must not exceed the original explicit page size; the connection checks decoded
-row/quad counts before publication. This delivery bound does not change the
+row/quad counts before publication. Only row, graph and Boolean outcomes are valid
+for paged requests; block, command and COPY envelopes fail before adaptation, so
+a block wrapper cannot bypass the count check. Complete requests retain all outcome
+kinds. This delivery bound does not change the
 server's per-request execution budget. Per-page origins may differ: only
 composition resolution and consistency remain fixed. The pages view preserves
 all original Wire page metadata, including typed provenance; the rows/graph view
