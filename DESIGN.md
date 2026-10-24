@@ -287,29 +287,27 @@ package harness. S17 block dispatch remains a later responsibility.
 
 ## S17 Complete SQL Calls
 
-The canonical declaration is `DatabaseOperationCatalog.sqlExecute`, owned by
-[DatabaseWire](../database-kit/Sources/DatabaseWire/DESIGN.md). Its
-`SQLExecuteOperation.Request` consumes `.text(String)`,
-`.statement(QueryStatement)`, or `.block(SQLBlock)`, canonical parameters and
-one execution budget. The existing
-`DatabaseSessionClient.execute(_:request:metadata:)` is the public call surface;
-SQL introduces no convenience client, parser, inferred access mode, session
-state, retry or transport-specific payload.
+The canonical operation is DatabaseOperationCatalog.queryExecute, owned by
+[DatabaseWire](../database-kit/Sources/DatabaseWire/DESIGN.md). QueryInput carries
+SQL/SPARQL text, QueryStatement or SQLBlock with parameters and one execution
+budget. Client.openConnection and QueryConnection.execute expose one invocation
+family; the existing session executes the canonical call without parsing text,
+rendering IR, inferring access mode or replaying effects.
 
 ```text
-owned text / statement / block + parameters + budget
-    -> existing session.execute(sqlExecute, request, metadata)
-        -> one request ID -> canonical bounded codecs -> injected transport
-        -> correlated complete response after authoritative block closure
-            -> ordered rows / COPY bytes / command counts
-        -> typed remote SQL diagnostic on failure
+owned SQL / statement / block + parameters + budget
+    -> connection.execute -> session.execute(queryExecute, request, metadata)
+        -> request ID -> bounded codecs -> injected transport
+        -> correlated canonical result after authoritative execution closure
+            -> rows / Boolean / RDF / COPY / commands / ordered block
 ```
 
-One request returns one bounded complete ordered result. It exposes no
-continuation, result paging or automatic replay. Existing `queryExecute`,
-`mutationExecute`, job and pagination contracts retain their meaning. Under
-`MultiBase`, the session's explicit Base target is preserved; the client does
-not infer a target from SQL. The server owns target and operation admission.
+Complete execution is the default. Explicit read paging retains the original
+request identity and fetches only admitted snapshots; it never replays mutations.
+Connection close drains active invocations without shutting down its separately
+owned transport. Retained complete results remain usable after close. Under
+MultiBase the explicit target is preserved; the server owns target and operation
+admission. The client does not infer a target from SQL.
 
 Query rows preserve column ordinals, duplicate labels, type/typmod metadata,
 typed NULL, numeric display scale, array dimensions, JSON/JSONB distinction,
