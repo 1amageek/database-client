@@ -1,5 +1,10 @@
 # DatabaseClient
 
+The approved [common access module](Sources/DatabaseAccess/DESIGN.md) owns
+named application access. The existing Client module owns its remote adapter.
+The optional Framework adapter consumes DatabaseAccess; this package gains no
+Framework or storage dependency.
+
 ## Purpose and Scope
 
 This document is the package design authority for `database-client`. The
@@ -15,7 +20,8 @@ contract and `database-server` implements the other end of it.
 - Parent: [Database workspace](../DESIGN.md).
 - Children: [HTTP transport](Sources/HTTPClient/DESIGN.md) and
   [WebSocket transport](Sources/WebSocketClient/DESIGN.md), and
-  [Core client](Sources/DatabaseClient/DESIGN.md). Other target
+  [Core client](Sources/DatabaseClient/DESIGN.md), plus
+  [common access](Sources/DatabaseAccess/DESIGN.md). Other target
   responsibilities remain composed by this package in the current scope.
 - Operating contract and verification expectations: [AGENTS.md](AGENTS.md).
 
@@ -25,12 +31,13 @@ This document does not restate wire field layout, operation identity, or
 
 ## Responsibilities and Boundaries
 
-The package produces five library products: one core and four transport
-adapters. The split exists so an application links exactly one transport and
+The package produces a common access product, one remote invocation core and
+four transport adapters. The split exists so an application links exactly one transport and
 never pulls another platform's runtime into its graph.
 
 | Product | Target path | Owns |
 |---|---|---|
+| `DatabaseAccess` | `Sources/DatabaseAccess` | named access composition, execution/opening contracts and common lazy result carriers; no interpreter, transport or storage |
 | `DatabaseClient` | `Sources/DatabaseClient` | typed call construction, request identifier reservation, encode/decode against DatabaseWire, session and job surfaces, the `DatabaseTransport` contract, and the client error algebra |
 | `DatabaseClientHTTP` | `Sources/HTTPClient` | request/response over `URLSession`, response body ownership, and HTTP configuration validation |
 | `DatabaseClientWebSocket` | `Sources/WebSocketClient` | connector and connection contracts, frame correlation, retired request identifiers, and frame byte ownership |

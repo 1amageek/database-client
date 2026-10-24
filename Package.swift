@@ -10,6 +10,13 @@ let hostPlatforms: [Platform] = [
     .linux,
 ]
 
+let accessRuntimeLinkerSettings: [LinkerSetting]
+if let archive = Context.environment["DATABASE_ACCESS_UNICODE_ARCHIVE"], !archive.isEmpty {
+    accessRuntimeLinkerSettings = [.unsafeFlags(["-Xlinker", archive], .when(platforms: [.wasi]))]
+} else {
+    accessRuntimeLinkerSettings = []
+}
+
 let package = Package(
     name: "database-client",
     platforms: [
@@ -20,6 +27,7 @@ let package = Package(
         .visionOS(.v26)
     ],
     products: [
+        .library(name: "DatabaseAccess", targets: ["DatabaseAccess"]),
         .library(name: "DatabaseClient", targets: ["DatabaseClient"]),
         .library(
             name: "DatabaseClientJavaScript",
@@ -57,14 +65,25 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "DatabaseClient",
+            name: "DatabaseAccess",
             dependencies: [
                 .product(name: "DatabaseTypes", package: "database-types"),
                 .product(name: "DatabaseKit", package: "database-kit"),
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
+            exclude: ["DESIGN.md", "NamedAccess/DESIGN.md", "QueryReferences/DESIGN.md", "Results/DESIGN.md"],
+            swiftSettings: [.define("DATABASE_CLIENT_MULTI_BASE", .when(traits: ["MultiBase"]))]
+        ),
+        .target(
+            name: "DatabaseClient",
+            dependencies: [
+                "DatabaseAccess",
+                .product(name: "DatabaseTypes", package: "database-types"),
+                .product(name: "DatabaseKit", package: "database-kit"),
+                .product(name: "DatabaseWire", package: "database-kit"),
+            ],
             path: "Sources/DatabaseClient",
-            exclude: ["DESIGN.md", "QueryExecution/DESIGN.md"],
+            exclude: ["DESIGN.md", "QueryExecution/DESIGN.md", "Access/DESIGN.md"],
             swiftSettings: [
                 .define(
                     "DATABASE_CLIENT_MULTI_BASE",
@@ -111,9 +130,18 @@ let package = Package(
             ],
             path: "Sources/FramedStreamClient"
         ),
+        .executableTarget(
+            name: "DatabaseAccessRuntimeContract",
+            dependencies: ["DatabaseAccess", "DatabaseClient", .product(name: "DatabaseTypes", package: "database-types"), .product(name: "DatabaseKit", package: "database-kit"), .product(name: "DatabaseWire", package: "database-kit")],
+            path: "Tests/DatabaseAccessRuntimeContract",
+            exclude: ["run.mjs"],
+            swiftSettings: [.define("DATABASE_CLIENT_MULTI_BASE", .when(traits: ["MultiBase"]))],
+            linkerSettings: accessRuntimeLinkerSettings
+        ),
         .testTarget(
             name: "DatabaseClientTests",
             dependencies: [
+                "DatabaseAccess",
                 "DatabaseClient",
                 .product(name: "DatabaseKit", package: "database-kit"),
                 .product(name: "DatabaseTypes", package: "database-types"),

@@ -1,5 +1,10 @@
 # Query Invocation
 
+The proposed [SDK remote adapter](../Access/DESIGN.md)
+consumes this component's existing generic connections and checked page streams.
+It does not move named access into Client or replace this continuation/lifetime
+implementation. The adapter is currently design-only.
+
 ## Purpose and Scope
 
 Owns the client query connection and retained row/graph retrieval. Parent:

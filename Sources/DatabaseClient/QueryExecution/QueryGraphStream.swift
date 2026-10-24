@@ -1,20 +1,25 @@
+import DatabaseAccess
 import DatabaseKit
 import DatabaseTypes
 import DatabaseWire
 
 /// Retained values; pages additionally preserve original provenance and read metadata.
-public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
+public struct QueryGraphStream<Transport: DatabaseTransport>: PagedGraph {
     private let page: RDFGraphPage
     private let source: QueryPageSource<Transport>?
     init(page: RDFGraphPage, source: QueryPageSource<Transport>?) { self.page = page; self.source = source }
     public var pages: Pages { Pages(page: page, source: source) }
     public func makeAsyncIterator() -> Iterator { Iterator(pages: pages.makeAsyncIterator()) }
+    public func makeGraphCursor() -> any GraphCursor { makeAsyncIterator() }
+    public func makeGraphPageCursor() -> any GraphPageCursor { pages.makeAsyncIterator() }
 
-    public struct Iterator: AsyncIteratorProtocol, Sendable {
+    public struct Iterator: AsyncIteratorProtocol, Sendable, GraphCursor {
         private var pages: Pages.Iterator
         private var values: RDFQuadIterator?
         private var finished = false
         fileprivate init(pages: Pages.Iterator) { self.pages = pages }
+        public mutating func nextQuad() async throws -> RDFQuad? { try await next() }
+        public mutating func next(isolation actor: isolated (any Actor)?) async throws -> RDFQuad? { try await next() }
         public mutating func next() async throws -> RDFQuad? {
             guard !finished else { return nil }
             do {
@@ -35,7 +40,7 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
         fileprivate init(page: RDFGraphPage, source: QueryPageSource<Transport>?) { self.page = page; self.source = source }
         public func makeAsyncIterator() -> Iterator { Iterator(page: page, source: source) }
 
-        public struct Iterator: AsyncIteratorProtocol, Sendable {
+        public struct Iterator: AsyncIteratorProtocol, Sendable, GraphPageCursor {
             private var first: RDFGraphPage?
             private var continuation: ByteString?
             private var progress: QueryContinuationProgress?
@@ -58,6 +63,8 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
                 snapshotVersion = page.snapshotVersion
                 #endif
             }
+            public mutating func nextGraphPage() async throws -> RDFGraphPage? { try await next() }
+            public mutating func next(isolation actor: isolated (any Actor)?) async throws -> RDFGraphPage? { try await next() }
             public mutating func next() async throws -> RDFGraphPage? {
                 do {
                     if let first { self.first = nil; return first }

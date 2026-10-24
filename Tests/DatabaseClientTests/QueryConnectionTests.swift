@@ -337,7 +337,7 @@ struct QueryConnectionTests {
     }
 }
 
-private func booleanResponse(_ value: Bool) throws -> QueryExecuteOperation.Response {
+func booleanResponse(_ value: Bool) throws -> QueryExecuteOperation.Response {
     #if DATABASE_CLIENT_MULTI_BASE
     .boolean(try QueryBooleanResult(value: value, provenance: nil,
         consistency: .transactional(DomainReadPoint(domainID: "pages", position: .version(1)))))
@@ -346,7 +346,7 @@ private func booleanResponse(_ value: Bool) throws -> QueryExecuteOperation.Resp
     #endif
 }
 
-private func graphPage(_ number: Int, continuation: ByteString? = nil, count: Int = 1) throws -> RDFGraphPage {
+func graphPage(_ number: Int, continuation: ByteString? = nil, count: Int = 1) throws -> RDFGraphPage {
     let quad = RDFQuad(subject: .iri(try RDFIRI("urn:s\(number)")),
         predicate: RDFPredicateIRI(try RDFIRI("urn:p")), object: .iri(try RDFIRI("urn:o")))
     #if DATABASE_CLIENT_MULTI_BASE
@@ -357,7 +357,7 @@ private func graphPage(_ number: Int, continuation: ByteString? = nil, count: In
     #endif
 }
 
-private func page(_ value: Int32, name: String = "n", continuation: ByteString? = nil, count: Int = 1) throws -> QueryRowPage {
+func page(_ value: Int32, name: String = "n", continuation: ByteString? = nil, count: Int = 1) throws -> QueryRowPage {
     let columns = [try QueryColumn(number: 1, name: name, type: .sql(.integer), isNullable: false)]
     #if DATABASE_CLIENT_MULTI_BASE
     return try QueryRowPage(columns: columns, rows: Array(repeating: QueryRow(values: [.primitive(.int32(value))]), count: count),
@@ -368,7 +368,7 @@ private func page(_ value: Int32, name: String = "n", continuation: ByteString? 
     #endif
 }
 
-private struct QueryTestTransport: DatabaseTransport {
+struct QueryTestTransport: DatabaseTransport {
     let exchange: @Sendable (ByteString) async throws -> ByteString
     init(_ exchange: @escaping @Sendable (ByteString) async throws -> ByteString) { self.exchange = exchange }
     func send(_ request: ByteString) async throws(DatabaseTransportError) -> ByteString {

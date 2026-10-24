@@ -4,7 +4,8 @@
 
 Owns the platform-independent typed invocation module. Parent:
 [Client package](../../DESIGN.md). Child:
-[Query invocation](QueryExecution/DESIGN.md).
+[Query invocation](QueryExecution/DESIGN.md) and
+[access composition](Access/DESIGN.md).
 
 ## Responsibilities and Boundaries
 

@@ -1,9 +1,10 @@
+import DatabaseAccess
 import DatabaseKit
 import DatabaseTypes
 import DatabaseWire
 
 /// Retained values; pages additionally preserve original provenance and read metadata.
-public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
+public struct QueryRowStream<Transport: DatabaseTransport>: PagedRows {
     private let page: QueryRowPage
     private let source: QueryPageSource<Transport>?
     init(page: QueryRowPage, source: QueryPageSource<Transport>?) { self.page = page; self.source = source }
@@ -13,12 +14,16 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
     public var metadata: FieldObject { page.metadata }
     public var pages: Pages { Pages(page: page, source: source) }
     public func makeAsyncIterator() -> Iterator { Iterator(pages: pages.makeAsyncIterator()) }
+    public func makeRowCursor() -> any RowCursor { makeAsyncIterator() }
+    public func makeRowPageCursor() -> any RowPageCursor { pages.makeAsyncIterator() }
 
-    public struct Iterator: AsyncIteratorProtocol, Sendable {
+    public struct Iterator: AsyncIteratorProtocol, Sendable, RowCursor {
         private var pages: Pages.Iterator
         private var values: QueryRowIterator?
         private var finished = false
         fileprivate init(pages: Pages.Iterator) { self.pages = pages }
+        public mutating func nextRow() async throws -> QueryRow? { try await next() }
+        public mutating func next(isolation actor: isolated (any Actor)?) async throws -> QueryRow? { try await next() }
         public mutating func next() async throws -> QueryRow? {
             guard !finished else { return nil }
             do {
@@ -39,7 +44,7 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
         fileprivate init(page: QueryRowPage, source: QueryPageSource<Transport>?) { self.page = page; self.source = source }
         public func makeAsyncIterator() -> Iterator { Iterator(page: page, source: source) }
 
-        public struct Iterator: AsyncIteratorProtocol, Sendable {
+        public struct Iterator: AsyncIteratorProtocol, Sendable, RowPageCursor {
             private var first: QueryRowPage?
             private var continuation: ByteString?
             private var progress: QueryContinuationProgress?
@@ -66,6 +71,8 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
                 snapshotVersion = page.snapshotVersion
                 #endif
             }
+            public mutating func nextRowPage() async throws -> QueryRowPage? { try await next() }
+            public mutating func next(isolation actor: isolated (any Actor)?) async throws -> QueryRowPage? { try await next() }
             public mutating func next() async throws -> QueryRowPage? {
                 do {
                     if let first { self.first = nil; return first }
