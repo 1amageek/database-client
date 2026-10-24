@@ -14,7 +14,8 @@ contract and `database-server` implements the other end of it.
 
 - Parent: [Database workspace](../DESIGN.md).
 - Children: [HTTP transport](Sources/HTTPClient/DESIGN.md) and
-  [WebSocket transport](Sources/WebSocketClient/DESIGN.md). Other target
+  [WebSocket transport](Sources/WebSocketClient/DESIGN.md), and
+  [Core client](Sources/DatabaseClient/DESIGN.md). Other target
   responsibilities remain composed by this package in the current scope.
 - Operating contract and verification expectations: [AGENTS.md](AGENTS.md).
 
@@ -332,3 +333,7 @@ The Framework's transaction, rollback and SQL semantic corpus is not duplicated
 in client unit tests. Real backend execution through the public operation is
 owned by S17's end-to-end integration lane. Kit, Server, Client and CLI use the
 same frozen task-source dependency graph; final URL integration remains S18.
+
+## IR-centered Execution Integration
+
+[Query Execution](../database-kit/Sources/DatabaseKit/Query/Execution/DESIGN.md) owns the directly consumed contract for the accepted QueryStatement/SQLBlock unification. Existing authorization, exact work budgets, first-error rollback, retained ownership and authoritative shutdown remain required. Runtime state and publication do not move into Kit declarations.

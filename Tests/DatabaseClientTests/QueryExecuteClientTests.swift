@@ -5,24 +5,24 @@ import DatabaseWire
 import Synchronization
 import Testing
 
-@Suite("Complete SQL client calls")
-struct SQLExecuteClientTests {
+@Suite("Canonical query client calls")
+struct QueryExecuteClientTests {
     @Test("Text statement and block calls retain their exact request and ordered owned response")
     func typedInputsAndOwnedResults() async throws {
         let statement = QueryStatement.select(SelectQuery(
             projection: [.expression(.parameter(position: 1), alias: "value")], source: .values([])))
-        let inputs: [SQLExecuteOperation.Input] = [
-            .text("SELECT $1; SHOW ALL"), .statement(statement),
+        let inputs: [QueryInput] = [
+            .sql("SELECT $1; SHOW ALL"), .statement(statement),
             .block(try SQLBlock(steps: [.statement(statement), .setting(.show(nil))])),
         ]
         let columns = [try QueryColumn(number: 1, name: "value", type: .sql(.text), isNullable: true)]
         let expected = QueryRow(values: [.primitive(.string("retained value"))])
         let transport = SQLClientTestTransport { bytes in
-            let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.sqlExecute, from: bytes)
+            let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.queryExecute, from: bytes)
             #expect(request.request.parameters == [QueryParameter(position: 1, value: .primitive(.null), type: .sql(.text))])
             #expect(request.metadata.traceID == "sql-client")
             #expect(request.request.input == inputs[Int(request.requestID) - 1])
-            return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.sqlExecute,
+            return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
                 requestID: request.requestID, response: .init(results: [
                     .rows(try .init(columns: columns, rows: [expected])),
                     .rows(try .init(columns: columns, rows: [])),
@@ -33,7 +33,7 @@ struct SQLExecuteClientTests {
         let client = DatabaseClient(transport: transport)
         for input in inputs {
             let response = try await executeTestDatabaseOperation(client: client,
-                operation: DatabaseOperationCatalog.sqlExecute,
+                operation: DatabaseOperationCatalog.queryExecute,
                 request: .init(input: input, parameters: [QueryParameter(position: 1, value: .primitive(.null), type: .sql(.text))]),
                 metadata: .init(traceID: "sql-client"))
             #expect(response.results.count == 4)
@@ -64,11 +64,11 @@ struct SQLExecuteClientTests {
         let transport = SQLClientTestTransport { bytes in
             let request = try DatabaseWireDecoder().decodeRequestEnvelope(bytes)
             return try DatabaseWireEncoder().encodeFailure(requestID: request.requestID,
-                operation: .sqlExecute, error: failure)
+                operation: .queryExecute, error: failure)
         }
         do {
             _ = try await executeTestDatabaseOperation(client: DatabaseClient(transport: transport),
-                operation: DatabaseOperationCatalog.sqlExecute, request: .init(input: .text("INSERT")))
+                operation: DatabaseOperationCatalog.queryExecute, request: .init(input: .sql("INSERT")))
             Issue.record("SQL failure became success")
         } catch DatabaseClientError.call(.remote(let remote)) {
             #expect(try remote.sqlDiagnostic() == diagnostic)
@@ -80,12 +80,12 @@ struct SQLExecuteClientTests {
     func rejectsMismatchedCorrelation() async throws {
         let transport = SQLClientTestTransport { bytes in
             let request = try DatabaseWireDecoder().decodeRequestEnvelope(bytes)
-            return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.sqlExecute,
+            return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
                 requestID: request.requestID + 1, response: .init(results: [.command(.commit, affectedRows: nil)]))
         }
         await #expect(throws: DatabaseClientError.call(.wire(.unexpectedRequestIdentifier(expected: 1, actual: 2)))) {
             try await executeTestDatabaseOperation(client: DatabaseClient(transport: transport),
-                operation: DatabaseOperationCatalog.sqlExecute, request: .init(input: .text("COMMIT")))
+                operation: DatabaseOperationCatalog.queryExecute, request: .init(input: .sql("COMMIT")))
         }
     }
 
@@ -98,7 +98,7 @@ struct SQLExecuteClientTests {
         }
         await #expect(throws: DatabaseClientError.transport(.cancelled)) {
             try await executeTestDatabaseOperation(client: DatabaseClient(transport: transport),
-                operation: DatabaseOperationCatalog.sqlExecute, request: .init(input: .text("UPDATE t SET v = 1")))
+                operation: DatabaseOperationCatalog.queryExecute, request: .init(input: .sql("UPDATE t SET v = 1")))
         }
         #expect(calls.withLock { $0 } == 1)
     }

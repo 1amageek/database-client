@@ -1,42 +1,41 @@
 {
-  "originHash" : "b777196a6cd0afc335fa8a83fc6fffaa02d8155da30efc2d4d27f49736e6ef6f",
-  "pins" : [
+  "originHash": "b777196a6cd0afc335fa8a83fc6fffaa02d8155da30efc2d4d27f49736e6ef6f",
+  "pins": [
     {
-      "identity" : "database-kit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/database-kit.git",
-      "state" : {
-        "revision" : "9ba081a10f16473e5846672ab8727cc394e56db5",
-        "version" : "26.1021.0"
+      "identity": "database-kit",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/1amageek/database-kit.git",
+      "state": {
+        "revision": "1bf2fdc3a874fddccf305c4902b5a16383d3369d"
       }
     },
     {
-      "identity" : "database-types",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/database-types.git",
-      "state" : {
-        "revision" : "ef1938fd73c1663664eba04df5baa6d5c6b6a306",
-        "version" : "26.1021.0"
+      "identity": "database-types",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/1amageek/database-types.git",
+      "state": {
+        "revision": "ef1938fd73c1663664eba04df5baa6d5c6b6a306",
+        "version": "26.1021.0"
       }
     },
     {
-      "identity" : "javascriptkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/1amageek/JavaScriptKit.git",
-      "state" : {
-        "revision" : "8067be4d2f907ab4a25614272f9e531fddd2ecfe",
-        "version" : "0.57.2"
+      "identity": "javascriptkit",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/1amageek/JavaScriptKit.git",
+      "state": {
+        "revision": "8067be4d2f907ab4a25614272f9e531fddd2ecfe",
+        "version": "0.57.2"
       }
     },
     {
-      "identity" : "swift-syntax",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swiftlang/swift-syntax",
-      "state" : {
-        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
-        "version" : "603.0.2"
+      "identity": "swift-syntax",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/swiftlang/swift-syntax",
+      "state": {
+        "revision": "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version": "603.0.2"
       }
     }
   ],
-  "version" : 3
+  "version": 3
 }

@@ -38,7 +38,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/1amageek/database-kit.git",
-            from: "26.1021.0",
+            revision: "1bf2fdc3a874fddccf305c4902b5a16383d3369d",
             traits: [
                 .trait(
                     name: "MultiBase",
@@ -64,6 +64,7 @@ let package = Package(
                 .product(name: "DatabaseWire", package: "database-kit"),
             ],
             path: "Sources/DatabaseClient",
+            exclude: ["DESIGN.md", "QueryExecution/DESIGN.md"],
             swiftSettings: [
                 .define(
                     "DATABASE_CLIENT_MULTI_BASE",

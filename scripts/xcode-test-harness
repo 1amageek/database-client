@@ -227,10 +227,10 @@ summary_number() {
 
 case "$TEST_TRAITS" in
   "")
-    default_expected_test_count=55
+    default_expected_test_count=60
     ;;
   "MultiBase")
-    default_expected_test_count=58
+    default_expected_test_count=63
     ;;
   *)
     echo "error: DATABASE_CLIENT_TEST_TRAITS must be empty or MultiBase" >&2
