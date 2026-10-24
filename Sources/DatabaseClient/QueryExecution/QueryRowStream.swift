@@ -42,6 +42,7 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
         public struct Iterator: AsyncIteratorProtocol, Sendable {
             private var first: QueryRowPage?
             private var continuation: ByteString?
+            private var progress: QueryContinuationProgress?
             private var source: QueryPageSource<Transport>?
             private let columns: [QueryColumn]
             private let metadata: FieldObject
@@ -55,7 +56,9 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
             fileprivate init(page: QueryRowPage, source: QueryPageSource<Transport>?) {
                 first = page
                 // Detach the small token instead of retaining a consumed bulk frame across I/O.
-                continuation = page.continuation?.detached(); self.source = source
+                let token = page.continuation?.detached()
+                continuation = token; progress = QueryContinuationProgress(continuation: token)
+                self.source = source
                 columns = page.columns; metadata = page.metadata; affectedRows = page.affectedRows
                 #if DATABASE_CLIENT_MULTI_BASE
                 composition = page.provenance?.composition; consistency = page.consistency
@@ -66,7 +69,7 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
             public mutating func next() async throws -> QueryRowPage? {
                 do {
                     if let first { self.first = nil; return first }
-                    guard let token = continuation else { source = nil; return nil }
+                    guard let token = continuation else { source = nil; progress = nil; return nil }
                     continuation = nil
                     guard let source else { throw QueryStreamError.unexpectedContinuation }
                     guard case .rows(let page) = try await source.fetch(after: token) else { throw QueryStreamError.unexpectedResultKind }
@@ -77,11 +80,11 @@ public struct QueryRowStream<Transport: DatabaseTransport>: QueryRows {
                     #else
                     guard page.snapshotVersion == snapshotVersion else { throw QueryStreamError.changedReadIdentity }
                     #endif
-                    guard page.continuation != token else { throw QueryStreamError.continuationDidNotAdvance }
+                    try progress?.advance(to: page.continuation, after: token)
                     guard page.rowCount > 0 || page.continuation == nil else { throw QueryStreamError.emptyPageWithContinuation }
                     continuation = page.continuation?.detached()
                     return page
-                } catch { first = nil; continuation = nil; source = nil; throw error }
+                } catch { first = nil; continuation = nil; progress = nil; source = nil; throw error }
             }
         }
     }

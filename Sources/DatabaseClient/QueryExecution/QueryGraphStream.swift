@@ -38,6 +38,7 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
         public struct Iterator: AsyncIteratorProtocol, Sendable {
             private var first: RDFGraphPage?
             private var continuation: ByteString?
+            private var progress: QueryContinuationProgress?
             private var source: QueryPageSource<Transport>?
             #if DATABASE_CLIENT_MULTI_BASE
             private let composition: CompositionResolution?
@@ -48,7 +49,9 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
             fileprivate init(page: RDFGraphPage, source: QueryPageSource<Transport>?) {
                 first = page
                 // Detach the small token instead of retaining a consumed bulk frame across I/O.
-                continuation = page.continuation?.detached(); self.source = source
+                let token = page.continuation?.detached()
+                continuation = token; progress = QueryContinuationProgress(continuation: token)
+                self.source = source
                 #if DATABASE_CLIENT_MULTI_BASE
                 composition = page.provenance?.composition; consistency = page.consistency
                 #else
@@ -58,7 +61,7 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
             public mutating func next() async throws -> RDFGraphPage? {
                 do {
                     if let first { self.first = nil; return first }
-                    guard let token = continuation else { source = nil; return nil }
+                    guard let token = continuation else { source = nil; progress = nil; return nil }
                     continuation = nil
                     guard let source else { throw QueryStreamError.unexpectedContinuation }
                     guard case .rdfGraph(let page) = try await source.fetch(after: token) else { throw QueryStreamError.unexpectedResultKind }
@@ -67,11 +70,11 @@ public struct QueryGraphStream<Transport: DatabaseTransport>: QueryGraph {
                     #else
                     guard page.snapshotVersion == snapshotVersion else { throw QueryStreamError.changedReadIdentity }
                     #endif
-                    guard page.continuation != token else { throw QueryStreamError.continuationDidNotAdvance }
+                    try progress?.advance(to: page.continuation, after: token)
                     guard page.quadCount > 0 || page.continuation == nil else { throw QueryStreamError.emptyPageWithContinuation }
                     continuation = page.continuation?.detached()
                     return page
-                } catch { first = nil; continuation = nil; source = nil; throw error }
+                } catch { first = nil; continuation = nil; progress = nil; source = nil; throw error }
             }
         }
     }

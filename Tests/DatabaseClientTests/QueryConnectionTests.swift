@@ -194,6 +194,119 @@ struct QueryConnectionTests {
         }
     }
 
+    @Test("Rows and graphs terminate adjacent, alternating and prefixed continuation cycles")
+    func continuationCycles() async throws {
+        for graph in [false, true] {
+            for (prefix, period) in [(0, 1), (0, 2), (3, 2), (5, 17)] {
+                let calls = Mutex(0)
+                let transport = QueryTestTransport { bytes in
+                    let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.queryExecute, from: bytes)
+                    let index = calls.withLock { let value = $0; $0 += 1; return value }
+                    let name = index < prefix ? "prefix-\(index)" : "cycle-\((index - prefix) % period)"
+                    let token = ByteString(utf8: name)
+                    let result: QueryExecuteOperation.Response = graph
+                        ? .rdfGraph(try graphPage(index, continuation: token))
+                        : .rows(try page(Int32(index), continuation: token))
+                    return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
+                        requestID: request.requestID, response: result)
+                }
+                let connection = try await DatabaseClient(transport: transport).openConnection()
+                defer { await connection.close() }
+                let result = try await connection.execute("SELECT 1", options: .init(pageSize: 1))
+                let bound = prefix + period * 4 + 16
+                if case .rdfGraph(let values) = result {
+                    try await expectTerminalFailure(values.pages, error: .continuationDidNotAdvance, maximumElements: bound)
+                } else {
+                    try await expectTerminalFailure(result.rows.pages, error: .continuationDidNotAdvance, maximumElements: bound)
+                }
+                #expect(calls.withLock { $0 } <= bound + 1)
+            }
+        }
+    }
+
+    @Test("Initial and continuation row or graph responses cannot exceed the explicit page size")
+    func oversizedPages() async throws {
+        for graph in [false, true] {
+            for initial in [false, true] {
+                let calls = Mutex(0)
+                let transport = QueryTestTransport { bytes in
+                    let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.queryExecute, from: bytes)
+                    let first = calls.withLock { $0 += 1; return $0 == 1 }
+                    let count = initial || !first ? 2 : 1
+                    let token = !initial && first ? ByteString(utf8: "next") : nil
+                    let result: QueryExecuteOperation.Response = graph
+                        ? .rdfGraph(try graphPage(1, continuation: token, count: count))
+                        : .rows(try page(1, continuation: token, count: count))
+                    return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
+                        requestID: request.requestID, response: result)
+                }
+                let connection = try await DatabaseClient(transport: transport).openConnection()
+                defer { await connection.close() }
+                let expected = QueryStreamError.pageLimitExceeded(actual: 2, maximum: 1)
+                if initial {
+                    await #expect(throws: expected) {
+                        try await connection.execute("SELECT 1", options: .init(pageSize: 1))
+                    }
+                } else {
+                    let result = try await connection.execute("SELECT 1", options: .init(pageSize: 1))
+                    if case .rdfGraph(let values) = result {
+                        try await expectTerminalFailure(values.pages, error: expected, maximumElements: 2)
+                    } else {
+                        try await expectTerminalFailure(result.rows.pages, error: expected, maximumElements: 2)
+                    }
+                }
+                #expect(calls.withLock { $0 } == (initial ? 1 : 2))
+            }
+        }
+    }
+
+    @Test("Long acyclic row and graph continuations retain order and terminate normally")
+    func longContinuationChains() async throws {
+        for graph in [false, true] {
+            let calls = Mutex(0)
+            let transport = QueryTestTransport { bytes in
+                let request = try DatabaseWireDecoder().decodeRequest(DatabaseOperationCatalog.queryExecute, from: bytes)
+                let index = calls.withLock { $0 += 1; return $0 }
+                let token = index < 257 ? ByteString(utf8: "next-\(index)") : nil
+                let result: QueryExecuteOperation.Response = graph
+                    ? .rdfGraph(try graphPage(index, continuation: token))
+                    : .rows(try page(Int32(index), continuation: token))
+                return try DatabaseWireEncoder().encodeResponse(DatabaseOperationCatalog.queryExecute,
+                    requestID: request.requestID, response: result)
+            }
+            let connection = try await DatabaseClient(transport: transport).openConnection()
+            defer { await connection.close() }
+            let result = try await connection.execute("SELECT 1", options: .init(pageSize: 1))
+            var count = 0
+            if case .rdfGraph(let values) = result {
+                for try await _ in values { count += 1 }
+            } else {
+                for try await value in result.rows {
+                    count += 1
+                    #expect(value.values == [.primitive(.int32(Int32(count)))])
+                }
+            }
+            #expect(count == 257 && calls.withLock { $0 } == 257)
+        }
+    }
+
+    private func expectTerminalFailure<Pages: AsyncSequence>(_ pages: Pages,
+        error expected: QueryStreamError, maximumElements: Int) async throws {
+        var iterator = pages.makeAsyncIterator()
+        var failed = false
+        for _ in 0..<maximumElements {
+            do {
+                guard try await iterator.next() != nil else { break }
+            } catch let error as QueryStreamError {
+                #expect(error == expected)
+                failed = true
+                break
+            }
+        }
+        #expect(failed)
+        #expect(try await iterator.next() == nil)
+    }
+
     private func values<Rows: QueryRows>(_ rows: Rows) async throws -> [QueryRow] {
         var result: [QueryRow] = []
         for try await row in rows { result.append(row) }
@@ -210,24 +323,24 @@ private func booleanResponse(_ value: Bool) throws -> QueryExecuteOperation.Resp
     #endif
 }
 
-private func graphPage(_ number: Int, continuation: ByteString? = nil) throws -> RDFGraphPage {
+private func graphPage(_ number: Int, continuation: ByteString? = nil, count: Int = 1) throws -> RDFGraphPage {
     let quad = RDFQuad(subject: .iri(try RDFIRI("urn:s\(number)")),
         predicate: RDFPredicateIRI(try RDFIRI("urn:p")), object: .iri(try RDFIRI("urn:o")))
     #if DATABASE_CLIENT_MULTI_BASE
-    return try RDFGraphPage(quads: [quad], continuation: continuation, provenance: nil,
+    return try RDFGraphPage(quads: Array(repeating: quad, count: count), continuation: continuation, provenance: nil,
         consistency: .transactional(DomainReadPoint(domainID: "pages", position: .version(1))))
     #else
-    return RDFGraphPage(quads: [quad], continuation: continuation, snapshotVersion: 1)
+    return RDFGraphPage(quads: Array(repeating: quad, count: count), continuation: continuation, snapshotVersion: 1)
     #endif
 }
 
-private func page(_ value: Int32, name: String = "n", continuation: ByteString? = nil) throws -> QueryRowPage {
+private func page(_ value: Int32, name: String = "n", continuation: ByteString? = nil, count: Int = 1) throws -> QueryRowPage {
     let columns = [try QueryColumn(number: 1, name: name, type: .sql(.integer), isNullable: false)]
     #if DATABASE_CLIENT_MULTI_BASE
-    return try QueryRowPage(columns: columns, rows: [QueryRow(values: [.primitive(.int32(value))])],
+    return try QueryRowPage(columns: columns, rows: Array(repeating: QueryRow(values: [.primitive(.int32(value))]), count: count),
         continuation: continuation, consistency: .transactional(DomainReadPoint(domainID: "pages", position: .version(1))))
     #else
-    return try QueryRowPage(columns: columns, rows: [QueryRow(values: [.primitive(.int32(value))])],
+    return try QueryRowPage(columns: columns, rows: Array(repeating: QueryRow(values: [.primitive(.int32(value))]), count: count),
         continuation: continuation, snapshotVersion: 1)
     #endif
 }

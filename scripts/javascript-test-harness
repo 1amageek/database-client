@@ -12,7 +12,7 @@ readonly test_timeout_seconds="${JAVASCRIPT_TEST_TIMEOUT_SECONDS:-120}"
 swift_sdk="${DATABASE_CLIENT_SWIFT_SDK:-${default_swift_sdk}}"
 expected_test_count=""
 filter=""
-readonly full_test_count=37
+readonly full_test_count=40
 readonly javascript_transport_test_count=11
 
 usage() {

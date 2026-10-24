@@ -35,7 +35,10 @@ Complete execution is the default. Explicit page size selects the server's
 read-only delivery profile; effects must be rejected before execution. Every
 fetch preserves input, parameters, partitions, target, metadata and request
 budget. Schema, outcome kind, read identity and continuation progress are
-validated; failures never become empty success. Per-page origins may differ: only
+validated; failures never become empty success. Initial and continuation responses
+must not exceed the original explicit page size; the connection checks decoded
+row/quad counts before publication. This delivery bound does not change the
+server's per-request execution budget. Per-page origins may differ: only
 composition resolution and consistency remain fixed. The pages view preserves
 all original Wire page metadata, including typed provenance; the rows/graph view
 flattens only values. Transport failures never replay.
@@ -44,6 +47,13 @@ Rows/graphs retain immutable initial results. Each iterator retains its current
 page and releases that iterator at EOF; an independently retained result may
 still own its initial frame. No accumulated row/quad array is created. Continuation
 tokens are detached at the retrieval boundary to avoid retaining expired pages.
+A shared QueryContinuationProgress value belongs exclusively to each page iterator.
+It uses a doubling-window cycle check with one retained checkpoint token and fixed
+integer counters, including saturating window growth. Every adjacent repeated token
+is rejected immediately; longer cycles are rejected once a checkpoint repeats,
+which may take multiple pages. It performs no extra fetches and keeps no token
+history or accumulated values. Both rows and graphs use the same algorithm; a
+progress failure is terminal and preserves the existing typed error.
 
 ## State, Ownership, and Lifecycle
 
@@ -51,7 +61,7 @@ tokens are detached at the retrieval boundary to avoid retaining expired pages.
 |---|---|---|
 | phase, execution identifiers and active tasks | Same QueryConnection actor | open -> closing -> closed |
 | active transport call | Existing client/transport contract | exactly one typed outcome |
-| current row/quad iterator | Exclusive value iterator over immutable bytes | EOF or caller release |
+| current row/quad iterator and continuation checkpoint | Exclusive value iterator, same Sendable storage on Native/WASM/Embedded | EOF, typed terminal failure or caller release |
 | result frames | Caller-owned immutable pages | Last retained owner ends |
 
 Close stops admission, cancels and awaits all admitted calls. Individual execute
@@ -70,6 +80,8 @@ same cancellation/drain contract is available on the fixed Embedded SDK.
 ## Verification and Change Impact
 
 Client tests cover exact input/result carriage, interpolation, page identity and
-progress, error/correlation preservation, cancellation, no retry, close/drain and
+progress (including prefixed cycles and long acyclic chains), initial/follow-up
+row/quad size violations, terminal failure, error/correlation preservation,
+cancellation, no retry, close/drain and
 shared-transport survival. Native standard/MultiBase and the existing real Node
 transport harnesses supplement final real HTTP and Embedded differential tests.

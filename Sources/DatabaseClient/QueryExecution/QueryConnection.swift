@@ -64,6 +64,17 @@ public actor QueryConnection<Transport: DatabaseTransport> {
             let value = try await session.execute(DatabaseOperationCatalog.queryExecute,
                 request: request, metadata: metadata)
             if Task.isCancelled { throw CancellationError() }
+            if let limit = request.page?.limit {
+                let count: UInt64
+                switch value {
+                case .rows(let page): count = UInt64(page.rowCount)
+                case .rdfGraph(let page): count = UInt64(page.quadCount)
+                default: return value
+                }
+                guard count <= UInt64(limit) else {
+                    throw QueryStreamError.pageLimitExceeded(actual: count, maximum: limit)
+                }
+            }
             return value
         }
         executions[identifier] = task

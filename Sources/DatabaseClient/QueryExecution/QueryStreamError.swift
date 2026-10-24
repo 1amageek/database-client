@@ -6,5 +6,6 @@ public enum QueryStreamError: Error, Sendable, Equatable {
     case changedMetadata
     case changedReadIdentity
     case continuationDidNotAdvance
+    case pageLimitExceeded(actual: UInt64, maximum: UInt32)
     case emptyPageWithContinuation
 }
