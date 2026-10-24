@@ -26,7 +26,10 @@ struct AccessRuntimeContract {
             try await outcomes()
             try await ownedAccess()
             try await borrowedAccess()
-            print("ACCESS_RUNTIME_PASS cases=8")
+            try await namedAccess()
+            try await applicationAccess()
+            try await startupShutdown()
+            print("ACCESS_RUNTIME_PASS cases=11")
         } catch {
             print("ACCESS_RUNTIME_FAIL")
             exit(1)
@@ -162,5 +165,72 @@ struct AccessRuntimeContract {
         var rows = result.rows.makeAsyncIterator()
         try require(try await rows.next()?.values == [.primitive(.int32(1))])
         print("ACCESS_RUNTIME_CASE borrowed-access PASS")
+    }
+
+    static func namedAccess() async throws {
+        let directory = DatabaseDirectory()
+        let client = DatabaseClient(transport: AccessRuntimeTransport(mode: .rows))
+        try await directory.configure(databases: ["primary": .borrowingRemote(session: client.database, maximumConcurrentExecutions: 2)])
+        defer { await directory.shutdown() }
+        let provider: any DatabaseProviding = directory
+        let database = try provider.database("primary")
+        let querying: any DatabaseQuerying = database
+        _ = try await querying.execute(.sql("SELECT n"), parameters: [], options: .init(pageSize: 1), metadata: .init())
+        try require(database === directory.database("primary"))
+        let pure = try AccessRuntimePerson.select(AccessRuntimePerson.fields.name, AccessRuntimePerson.fields.isActive)
+            .where(AccessRuntimePerson.fields.isActive == true).limit(2)
+        let bound = try database.entity(AccessRuntimePerson.self).select(AccessRuntimePerson.fields.name, AccessRuntimePerson.fields.isActive)
+            .where(AccessRuntimePerson.fields.isActive == true).limit(2)
+        try require(bound.definition == pure.definition)
+        let result = try await bound.execute(options: .init(pageSize: 1))
+        var rows = result.rows.makeAsyncIterator()
+        try require(try await rows.next()?.values == [.primitive(.int32(1))])
+        try require(try await rows.next()?.values == [.primitive(.int32(2))])
+        await directory.shutdown()
+        try await directory.configure(databases: ["primary": .borrowingRemote(session: client.database, maximumConcurrentExecutions: 2)])
+        var rejected = false
+        do { _ = try await bound.execute() } catch { rejected = true }
+        try require(rejected)
+        try require(database !== directory.database("primary"))
+        _ = try await directory.database("primary").execute(pure, options: .init(pageSize: 1))
+        print("ACCESS_RUNTIME_CASE named-access PASS")
+    }
+
+    static func applicationAccess() async throws {
+        let client = DatabaseClient(transport: AccessRuntimeTransport(mode: .rows))
+        try await Database.configure(databases: ["primary": .borrowingRemote(session: client.database, maximumConcurrentExecutions: 2)])
+        defer { await Database.shutdown() }
+        let database = try Database.database("primary")
+        try require(database === Database.database("primary"))
+        _ = try await database.execute("SELECT n", options: .init(pageSize: 1))
+        await Database.shutdown()
+        var rejected = false
+        do { _ = try await database.execute("SELECT n") } catch { rejected = true }
+        try require(rejected)
+        print("ACCESS_RUNTIME_CASE application-access PASS")
+    }
+
+    static func startupShutdown() async throws {
+        let directory = DatabaseDirectory(), gate = AccessRuntimeGate(), closed = AccessRuntimeCount()
+        let first = try DatabaseConfiguration.owningRemote(maximumConcurrentExecutions: 1,
+            makeTransport: { AccessRuntimeTransport(mode: .rows) }, shutdown: { _ in closed.recordShutdown() })
+        let second = try DatabaseConfiguration.owningRemote(maximumConcurrentExecutions: 1,
+            makeTransport: { await gate.hold(); return AccessRuntimeTransport(mode: .rows) },
+            shutdown: { _ in closed.recordShutdown() })
+        let opening = Task { try await directory.configure(databases: ["a": first, "b": second]) }
+        await gate.waitUntilEntered()
+        let stopping = Task { await directory.shutdown() }
+        var closing = false
+        while !closing {
+            do { _ = try directory.database("a") }
+            catch { if case .shuttingDown = error { closing = true } }
+            if !closing { await Task.yield() }
+        }
+        await gate.release()
+        await stopping.value
+        var rejected = false
+        do { try await opening.value } catch { rejected = true }
+        try require(rejected && closed.count == 2)
+        print("ACCESS_RUNTIME_CASE startup-shutdown PASS")
     }
 }

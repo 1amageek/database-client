@@ -2,13 +2,13 @@
 
 ## Purpose and Scope
 
-Status: proposed, unimplemented component. Parent: [DatabaseAccess](../DESIGN.md).
+Status: N03 concrete bound-reference implementation contract. Parent: [DatabaseAccess](../DESIGN.md).
 Children: none. Owns immutable entity/query references attached to one named
 access handle. Pure construction belongs to Kit, not this component.
 
 ## Responsibilities and Boundaries
 
-EntityReference is a named source; ModelEntityReference<Model> carries compiled
+EntitySource is a named source; ModelEntitySource<Model> carries compiled
 model identity. QueryReference and ModelQueryReference<Model> retain the same
 resolved handle plus SelectQuery or Kit's Selection<Model> view. These are
 runtime-bound access views, not another query algebra, execution engine or
@@ -98,3 +98,9 @@ reach the existing local/remote executor once and retain its meter/authority.
 N04 preserves all previously supported SQL builder source metadata during
 migration; unsupported new feature paths are explicit typed failures, not empty
 success or a different interpretation.
+
+The concrete source names avoid colliding with the existing primitive
+DatabaseTypes.EntityReference. Typed select entry points expand Field parameter
+packs locally, then call Kit Selection.select(fields:) with FieldIdentity values.
+Kit remains the only field-identity validation owner; no pack forwarding or
+metadata-dependent type erasure crosses the Embedded boundary.

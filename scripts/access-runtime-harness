@@ -70,13 +70,13 @@ for lane in standard embedded; do
     shasum -a 256 "$RESULT_ROOT/$lane.wasm" > "$RESULT_ROOT/$lane.sha256"
     timeout_command "$RUN_TIMEOUT" node "$ROOT_DIR/Tests/DatabaseAccessRuntimeContract/run.mjs" \
         "$RESULT_ROOT/$lane.wasm" 2>&1 | tee "$RESULT_ROOT/$lane-runtime.log"
-    for marker in retained-rows paged-rows paged-graph terminal-failure close-retained outcome-kinds owned-access borrowed-access; do
+    for marker in retained-rows paged-rows paged-graph terminal-failure close-retained outcome-kinds owned-access borrowed-access named-access application-access startup-shutdown; do
         [[ "$(rg -F -x -c "ACCESS_RUNTIME_CASE $marker PASS" "$RESULT_ROOT/$lane-runtime.log")" == 1 ]] || exit 1
     done
-    [[ "$(rg -c '^ACCESS_RUNTIME_CASE ' "$RESULT_ROOT/$lane-runtime.log")" == 8 ]] || exit 1
-    [[ "$(rg -F -x -c 'ACCESS_RUNTIME_PASS cases=8' "$RESULT_ROOT/$lane-runtime.log")" == 1 ]] || exit 1
+    [[ "$(rg -c '^ACCESS_RUNTIME_CASE ' "$RESULT_ROOT/$lane-runtime.log")" == 11 ]] || exit 1
+    [[ "$(rg -F -x -c 'ACCESS_RUNTIME_PASS cases=11' "$RESULT_ROOT/$lane-runtime.log")" == 1 ]] || exit 1
     [[ "$(rg -F -x -c 'ACCESS_WASI_EXIT code=0' "$RESULT_ROOT/$lane-runtime.log")" == 1 ]] || exit 1
     if rg -n 'ACCESS_RUNTIME_FAIL|RuntimeError:|fatal error:|Error:|error:' "$RESULT_ROOT/$lane-runtime.log"; then exit 1; fi
 done
 shasum -a 256 -c "$RESULT_ROOT/inputs.sha256"
-echo 'Access runtime: standard and Embedded eight cases each passed'
+echo 'Access runtime: standard and Embedded eleven cases each passed'

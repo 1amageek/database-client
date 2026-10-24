@@ -2,8 +2,7 @@
 
 ## Purpose and Scope
 
-Status: acquisition configuration is implemented; named directories and handles
-remain N03 work. Parent: [DatabaseAccess](../DESIGN.md).
+Status: N03 concrete directory and handle implementation contract. Parent: [DatabaseAccess](../DESIGN.md).
 Children: none. Owns application aliases, startup publication, generation-bound
 handles and authoritative access shutdown.
 
@@ -74,7 +73,7 @@ there is no per-screen or result shutdown requirement. Lower-level borrowed
 resources may still be explicitly closed by their external owner; subsequent
 execution preserves that underlying closed error without reopening them.
 
-Proposed lookup/bootstrap error cases are notConfigured, configurationInProgress,
+Lookup/bootstrap error cases are notConfigured, configurationInProgress,
 alreadyConfigured, shuttingDown, nameNotFound, invalidName and
 invalidConcurrencyLimit. Failed initialization retains the alias and original
 typed cause; generation/admission failures remain distinguishable from SQL,
@@ -160,3 +159,29 @@ Adapter execution delegates without another admission queue or meter. Adapter
 close coalesces its awaited cleanup, drains the existing connection first and
 then shuts down only owned transport/container resources. Cancellation does not
 abandon cleanup. All names still remain N03 application-directory concerns.
+
+### N03 concrete ownership
+
+DatabaseProviding defines synchronous lookup; DatabaseQuerying defines the
+non-generic execution requirement. DatabaseExecuting keeps its original independent execution/close requirements;
+DatabaseQuerying describes the directory-owned handle without exposing close. The immutable Database handle exposes execution and
+entity references; its shared application directory owns shutdown. Isolated
+DatabaseDirectory instances provide the same configuration/lookup/shutdown flow
+for tests and authorization-bound server composition.
+
+A single Mutex<Phase> stores unconfigured/configuring/ready/closing/closed.
+Each configuration receives a fresh retained AccessGeneration identity with one
+Mutex<Bool> validity bit. Directory shutdown invalidates that generation at its
+linearization point; an execute already past the validity check is still
+admitted or rejected by the original connection's close boundary. No second
+execution counter or queue is added. Directory-to-generation is the sole nested
+lock order; handle execution never reads the directory.
+
+Lifecycle Tasks are installed under the phase lock, and their asynchronous
+workers acquire resources, cancel/join initialization, close endpoints and await
+completion outside the lock. Publication checks the same identity and task
+cancellation under the lock. Publication is the configure success boundary; a
+caller cancellation that arrives after publication does not undo that success.
+A factory failure always preserves its alias and original cause, including a
+factory error observed after caller cancellation. Cancellation detected by the
+directory itself remains CancellationError. Cleanup closes successful acquisitions in reverse order.
